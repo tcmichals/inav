@@ -1,46 +1,44 @@
-# Allwinner Cubie A5E RISC-V Co-Processor & FPGA Offloader Specification
+# Allwinner Cubie A5E RISC-V RPMsg & SPI Dual-Transport Specification
 
 > [!IMPORTANT]
-> **HETEROGENEOUS A5E RISC-V + FPGA HARDWARE ARCHITECTURE**
-> On the **Allwinner Cubie A5E Linux SBC**, hardware offloading is partitioned between the Linux ARM host cores, the embedded **A5E RISC-V co-processor core**, and the **`rt_offloader` FPGA** ([`a5e_riscv_target.hpp`](file:///home/tcmichals/ssdData/projects/home/inav/src/target/linux_sbc/a5e_riscv_target.hpp)).
+> **HETEROGENEOUS A5E RISC-V RPMsg / SPI TRANSPORT ARCHITECTURE**
+> On the **Allwinner Cubie A5E Linux SBC**, communication with the embedded **A5E RISC-V co-processor** and **`rt_offloader` FPGA** uses a dedicated **POSIX Real-Time Worker Thread 3** (`SCHED_FIFO` Priority 97, CPU Core 1) ([`a5e_riscv_target.hpp`](file:///home/tcmichals/ssdData/projects/home/inav/src/target/linux_sbc/a5e_riscv_target.hpp)).
+>
+> Data transport supports two dynamic modes:
+> 1. **RPMsg over virtio (`/dev/rpmsg0`)**: Linux ARM Host $\leftrightarrow$ A5E RISC-V Co-Processor $\leftrightarrow$ FPGA.
+> 2. **Direct SPI (`/dev/spidev0.0`)**: Linux ARM Host $\leftrightarrow$ FPGA.
 
 ---
 
-## 1. Heterogeneous Tri-Core Task Allocation
+## 1. Multi-Thread POSIX & Hardware Topology
 
 ```
-  ┌─────────────────────────────────────────────────────────────────────────┐
-  │ 1. Linux ARM Cortex-A53 Host Cores (Allwinner Cubie A5E)                │
-  │    - Runs Linux Real-Time thread hardener (mlockall, SCHED_FIFO 99/98).  │
-  │    - Runs 8 kHz EKF3 15-state estimator & Betaflight 3-axis PID dynamics.│
-  │    - Runs Wi-Fi / Ethernet MSP Configurator server on TCP 5760.          │
-  └────────────────────────────────────┬────────────────────────────────────┘
-                                       │
-                Shared Memory Lock-Free SPSC TLP Ring Buffer
-                                       │
-                                       ▼
-  ┌─────────────────────────────────────────────────────────────────────────┐
-  │ 2. Embedded A5E RISC-V Co-Processor Core (Bare-Metal C++20 HAL)         │
-  │    - Dedicated hard real-time I/O coprocessor.                          │
-  │    - Latches 64-bit nanosecond hardware timestamps at DRDY clock edge.   │
-  │    - Manages high-speed Dual-SPI / PCIe TLP bus to FPGA.                │
-  └────────────────────────────────────┬────────────────────────────────────┘
-                                       │
-                      Dual-SPI / PCIe TLP Hardware Bus
-                                       │
-                                       ▼
-  ┌─────────────────────────────────────────────────────────────────────────┐
-  │ 3. FPGA Target (`rt_offloader` Verilog Cores)                           │
-  │    - Verilog DShot Motor Core (DShot150/300/600 pulse generation).       │
-  │    - Verilog Parallel PWM / PPM RC Capture Core.                        │
-  │    - Verilog Auto-SPI IMU DMA Core (8 kHz ICM-42688-P burst reader).    │
-  └─────────────────────────────────────────────────────────────────────────┘
+                                  Linux ARM Host (Cubie A5E)
+                                              │
+        ┌─────────────────────────────────────┼─────────────────────────────────────┐
+        ▼                                     ▼                                     ▼
+  Thread 1: Flight Loop              Thread 2: General I/O              Thread 3: RPMsg Worker
+  - SCHED_FIFO Priority 99           - SCHED_FIFO Priority 98           - SCHED_FIFO Priority 97
+  - CPU Core 3 (isolcpus=3)          - CPU Core 2 (isolcpus=2)          - CPU Core 1 (isolcpus=1)
+  - 8 kHz EKF3 & PID Math            - I2C Baro / Compass               - /dev/rpmsg0 or /dev/spidev0.0
+        │                                                                           │
+        └───────────────────────────────┬───────────────────────────────────────────┘
+                                        │ Lock-Free SPSC TLP Ring Buffer
+                                        ▼
+                          Embedded A5E RISC-V Co-Processor
+                          - Bare-metal zero-copy virtio ring
+                          - Latches DRDY 64-bit nanosecond timestamps
+                                        │
+                                        ▼ Dual-SPI / PCIe TLP Bus
+                          `rt_offloader` FPGA Target
+                          - Verilog DShot, PWM, and Auto-SPI IMU
 ```
 
 ---
 
-## 2. Technical Characteristics
+## 2. Dual Transport Modes
 
-1. **Deterministic Latency**: The A5E RISC-V core runs bare-metal without OS context switching, providing deterministic sub-microsecond communication with the `rt_offloader` FPGA.
-2. **Nanosecond Timestamping**: The A5E RISC-V core latches 64-bit nanosecond hardware timestamps (`timestamp_ns`) when the FPGA IMU `DRDY` interrupt fires.
-3. **Transport Parity**: Uses the exact same 64-byte TLP packet structure (`asp_tlp64.hpp`) used on RP2350 Pico 2 W and Linux SITL targets.
+| Transport Mode | Interface Device | Hardware Path | Advantages |
+| :--- | :--- | :--- | :--- |
+| **`TransportMode::RpMsg_VirtIo`** | `/dev/rpmsg0` | Linux ARM $\leftrightarrow$ A5E RISC-V Co-Processor $\leftrightarrow$ FPGA | Zero-copy shared memory virtio ring; RISC-V offloads FPGA control |
+| **`TransportMode::SpiDev_Direct`** | `/dev/spidev0.0` | Linux ARM $\leftrightarrow$ FPGA | Direct hardware bypass mode for FPGA register debugging |
