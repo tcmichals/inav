@@ -2,7 +2,7 @@
  * Copyright (C) 2026 Tim Michals
  * SPDX-License-Identifier: GPL-3.0-or-later
  *
- * `tcmichals/inav` - Linux POSIX Real-Time Thread Hardener (1.0 GHz Single-Core / Multi-Core Modes)
+ * `tcmichals/inav` - Linux Single Real-Time Core POSIX Hardener (Core 3, SCHED_FIFO Priority 99)
  */
 
 #ifndef LINUX_RT_HARDENER_HPP
@@ -19,19 +19,20 @@ namespace abstractx::target::sitl {
 
 class LinuxRtHardener {
 public:
-    // Single 1.0 GHz CPU Core Mode (Flight Loop + epoll Reactor on CPU Core 3, SCHED_FIFO Priority 99)
-    static bool harden_single_core_unified(uint32_t cpu_core_id = 3) noexcept {
-        return configure_thread(pthread_self(), 99, cpu_core_id);
-    }
+    // Harden Single Isolated Real-Time CPU Core 3 (SCHED_FIFO Priority 99)
+    // Core 3 executes the 8 kHz Flight Loop AND non-blocking epoll I/O reactor concurrently (< 4.3 us frame time)
+    static bool harden_single_realtime_core(uint32_t rt_core_id = 3) noexcept {
+        cpu_set_t cpuset;
+        CPU_ZERO(&cpuset);
+        CPU_SET(rt_core_id, &cpuset);
+        
+        if (pthread_setaffinity_np(pthread_self(), sizeof(cpu_set_t), &cpuset) != 0) {
+            return false;
+        }
 
-    // Configure Flight Loop Real-Time Thread (Priority 99, CPU Core 3)
-    static bool harden_flight_thread(uint32_t cpu_core_id = 3) noexcept {
-        return configure_thread(pthread_self(), 99, cpu_core_id);
-    }
-
-    // Configure Hardware I/O Offloader Thread (Priority 98, CPU Core 2)
-    static bool harden_io_thread(pthread_t io_thread_handle, uint32_t cpu_core_id = 2) noexcept {
-        return configure_thread(io_thread_handle, 98, cpu_core_id);
+        struct sched_param param{};
+        param.sched_priority = 99; // Maximum POSIX Real-Time Priority
+        return (pthread_setschedparam(pthread_self(), SCHED_FIFO, &param) == 0);
     }
 
     // Lock Physical Memory Pages & Pre-Fault Stack Space
@@ -44,21 +45,6 @@ public:
         volatile char stack_buf[65536];
         std::memset((void*)stack_buf, 0, sizeof(stack_buf));
         return true;
-    }
-
-private:
-    static bool configure_thread(pthread_t thread, int priority, uint32_t cpu_core_id) noexcept {
-        cpu_set_t cpuset;
-        CPU_ZERO(&cpuset);
-        CPU_SET(cpu_core_id, &cpuset);
-        
-        if (pthread_setaffinity_np(thread, sizeof(cpu_set_t), &cpuset) != 0) {
-            return false;
-        }
-
-        struct sched_param param{};
-        param.sched_priority = priority;
-        return (pthread_setschedparam(thread, SCHED_FIFO, &param) == 0);
     }
 };
 
