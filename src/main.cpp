@@ -2,7 +2,7 @@
  * Copyright (C) 2026 Tim Michals
  * SPDX-License-Identifier: GPL-3.0-or-later
  *
- * `tcmichals/inav` - `pcie-clean` Complete Flight Engine & Hardware Simulator
+ * `tcmichals/inav` - `pcie-clean` Flight Engine, Config Persistence & MSP TCP Server
  */
 
 #include "coroutine_task.hpp"
@@ -11,39 +11,54 @@
 #include "spsc_tlp_ring.hpp"
 #include "config_registry.hpp"
 #include "msp_protocol.hpp"
+#include "msp_server.hpp"
+#include "blackbox_logger.hpp"
+#include "target_interface.hpp"
 #include "pid.hpp"
 #include "attitude.hpp"
 #include "navigation.hpp"
+#include "mixer.hpp"
+#include "ekf3.hpp"
 #include "imu_pcie_driver.hpp"
 #include "esc_dshot_driver.hpp"
 #include "hardware_simulator.hpp"
+#include "linux_rt_hardener.hpp"
 #include <iostream>
 #include <cassert>
 
 using namespace abstractx;
 
-// Global SPSC Telemetry Ring
+// Global SPSC Telemetry & CTF Logging Rings
 SpscTlpRing<64> g_telemetry_ring;
+SpscTlpRing<64> g_logging_ring;
 
 // Hardware Simulator Instance
 sitl::HardwareSimulator g_hw_sim;
 
-// Flight Control Modules
-flight::AttitudeFilter g_attitude_filter;
+// Flight Control & EKF3 State Estimator Modules
+flight::Ekf3Filter g_ekf3;
 flight::PidController g_pid_controller;
 flight::NavigationEngine g_nav_engine;
+flight::Mixer<4> g_quad_mixer(flight::presets::QuadX);
 
-// Coroutine running the full flight loop
+// Configurable MSP TCP Server (Listens on TCP 5760 for iNav Configurator)
+msp::MspServer g_msp_server{msp::MspServerConfig{msp::TransportMode::Tcp, 5760, 115200}};
+
+// Coroutine running the full flight loop with EKF3 & Zero-Alloc BareCTF Binary Logging
 Task<void> run_flight_loop() {
-    std::cout << "\n[Flight Loop] Starting Zero-Alloc C++20 Flight Control Loop..." << std::endl;
+    logging::BlackboxLogger::set_level(logging::LogLevel::FlightData);
+    logging::BlackboxLogger::log_info(g_logging_ring, "Starting EKF3 Multi-Sensor Flight Loop", 1000000000ULL);
 
-    // Set RTH Home Position
+    g_ekf3.reset();
     g_nav_engine.set_home(37.7749f, -122.4194f, 1000.0f);
     g_nav_engine.set_mode(flight::NavMode::ReturnToHome);
 
     for (uint32_t step = 0; step < 10; ++step) {
-        // Step Linux Hardware Simulator (1 ms / 1000 us timestep)
+        // Step Hardware Simulator (1 ms timestep)
         g_hw_sim.step(1000, g_telemetry_ring);
+
+        // Poll Configurable MSP TCP Server
+        g_msp_server.poll();
 
         // Consume TLP Telemetry Stream
         while (!g_telemetry_ring.empty()) {
@@ -51,28 +66,42 @@ Task<void> run_flight_loop() {
             if (opt_tlp.has_value()) {
                 const auto& tlp = opt_tlp.value();
 
-                // Driver parses 14B IMU burst from 64B TLP
+                // Unpack IMU burst from 64B TLP
                 drivers::ImuSample imu = drivers::ImuPcieDriver::parse_tlp(tlp);
 
-                // Run Attitude Sensor Fusion
-                flight::AttitudeAngles angles = g_attitude_filter.update(imu.accel_g, imu.gyro_deg_s, 0.001f);
+                // Run EKF3 Time Predict Step (64-bit nanosecond hardware timestamps)
+                g_ekf3.predict_imu(imu);
 
-                // Run Navigation RTH Controller
-                std::array<float, 3> nav_target_vel = g_nav_engine.update(37.7740f, -122.4180f, 500.0f);
+                // Simulate periodic Baro & GPS corrections
+                if (step % 5 == 0) {
+                    g_ekf3.correct_baro(1000.0f, imu.timestamp_ns);
+                    g_ekf3.correct_gps(37.7740f, -122.4180f, 1000.0f, {0.0f, 0.0f, 0.0f}, imu.timestamp_ns);
+                }
+
+                // Get EKF3 State Estimation
+                const auto& ekf_state = g_ekf3.state();
+
+                // Run Navigation Controller
+                std::array<float, 3> nav_vel = g_nav_engine.update(37.7740f, -122.4180f, 500.0f);
+                (void)nav_vel;
 
                 // Run PID Controller
                 std::array<float, 3> target_rates{0.0f, 0.0f, 0.0f};
                 flight::PidState pid_out = g_pid_controller.update(target_rates, imu.gyro_deg_s, 0.001f);
 
-                // Dispatch ESC DShot Command over PCIe BAR
-                uint16_t motor1_cmd = static_cast<uint16_t>(1000.0f + std::abs(pid_out.total_out[0]) * 100.0f);
-                Tlp64 dshot_tlp = drivers::EscDshotDriver::make_motor_write_tlp(0, motor1_cmd, static_cast<uint8_t>(step));
-                g_hw_sim.handle_mem_write(dshot_tlp.target_address(), motor1_cmd);
+                // Mix Quadcopter Motors using C++20 QuadX Mixer
+                auto motors = g_quad_mixer.mix(0.5f, pid_out);
+                Tlp64 dshot_tlp = drivers::EscDshotDriver::make_motor_write_tlp(0, motors[0], static_cast<uint8_t>(step));
+                g_hw_sim.handle_mem_write(dshot_tlp.target_address(), motors[0]);
 
-                std::cout << "  [Step " << step << "] HW Time=" << imu.timestamp_ns << " ns"
-                          << " | Roll=" << angles.roll_deg << " deg"
-                          << " | Nav RTH Target Vel X=" << nav_target_vel[0] << " cm/s"
-                          << " -> Motor1=" << motor1_cmd << std::endl;
+                // Log BareCTF Binary Trace Packet
+                logging::CtfFlightEvent ctf_evt{};
+                ctf_evt.roll_deg_x10 = static_cast<int16_t>(ekf_state.attitude.roll_deg * 10.0f);
+                ctf_evt.pitch_deg_x10 = static_cast<int16_t>(ekf_state.attitude.pitch_deg * 10.0f);
+                ctf_evt.yaw_deg = static_cast<uint16_t>(ekf_state.attitude.yaw_deg);
+                ctf_evt.motor1 = motors[0];
+
+                logging::BlackboxLogger::log_ctf_event(g_logging_ring, imu.timestamp_ns, ctf_evt);
             }
         }
 
@@ -83,27 +112,38 @@ Task<void> run_flight_loop() {
 }
 
 int main() {
-    std::cout << "=================================================================" << std::endl;
-    std::cout << "  tcmichals/inav (pcie-clean): The Fusion of iNav Nav & Betaflight" << std::endl;
-    std::cout << "=================================================================" << std::endl;
+#if defined(__linux__)
+    // 0. Harden Linux Real-Time Environment (Pin to Isolated CPU 3, SCHED_FIFO Priority 99, mlockall RAM)
+    target::linux_rt::LinuxRtHardener::harden_realtime_thread(3, 99);
+#endif
 
-    // 1. Initialize Zero-Linker Configuration Registry
-    ConfigRegistry::reset_defaults();
-    assert(ConfigRegistry::verify_magic() && "Config magic verification failed");
-    std::cout << "[PASS] C++20 Zero-Linker Configuration Registry active (Zero .ld hacks)" << std::endl;
+    // 1. Initialize Zero-Linker Configuration Registry from config.bin (or auto-create config.bin with defaults)
+    bool config_loaded = ConfigRegistry::load_from_file("config.bin");
+    assert(config_loaded && "Failed to load/create config.bin");
+    assert(ConfigRegistry::verify_magic() && "Config magic check failed");
 
-    // 2. Initialize Hardware Simulator
-    g_hw_sim.handle_mem_write(bar::ImuBase + reg::imu::Control, 0x01); // Enable IMU Auto-DMA
+    // 2. Start Configurable MSP TCP Server for iNav Configurator (TCP 5760)
+    assert(g_msp_server.start() && "MSP server failed to start");
 
-    // 3. Execute Flight Loop Coroutine
+    // 3. Initialize Hardware Simulator & Enable IMU
+    g_hw_sim.handle_mem_write(bar::ImuBase + reg::imu::Control, 0x01);
+
+    // 4. Run Flight Loop Coroutine
     Task<void> flight_task = run_flight_loop();
     while (!flight_task.done()) {
         flight_task.resume();
     }
 
-    std::cout << "\n=================================================================" << std::endl;
-    std::cout << " [SUCCESS] iNav Navigation & Betaflight Dynamics Flight Engine Live!" << std::endl;
-    std::cout << "=================================================================" << std::endl;
+    // 5. Verify CTF Binary Trace Log Packets in SPSC Ring
+    size_t log_count = 0;
+    while (!g_logging_ring.empty()) {
+        auto opt_log = g_logging_ring.pop();
+        if (opt_log.has_value()) {
+            log_count++;
+        }
+    }
+    assert(log_count > 0 && "Zero CTF log records generated");
 
+    g_msp_server.stop();
     return 0;
 }

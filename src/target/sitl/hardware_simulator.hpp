@@ -11,8 +11,8 @@
 #include "asp_tlp64.hpp"
 #include "pcie_bar_map.hpp"
 #include "spsc_tlp_ring.hpp"
+#include "blackbox_logger.hpp"
 #include <cstdint>
-#include <iostream>
 #include <cmath>
 
 namespace abstractx::sitl {
@@ -56,10 +56,6 @@ public:
     void handle_mem_write(uint32_t addr, uint32_t value) noexcept {
         if (addr == (bar::ImuBase + reg::imu::Control)) {
             imu_enabled_ = (value & 0x01) != 0;
-            std::cout << "[HIL Sim] IMU Auto-DMA " << (imu_enabled_ ? "ENABLED" : "DISABLED") << std::endl;
-        } else if (addr >= bar::EscBase && addr <= (bar::EscBase + reg::esc::Motor4)) {
-            uint32_t motor_idx = (addr - (bar::EscBase + reg::esc::Motor1)) / 4;
-            std::cout << "[HIL Sim] ESC DShot Motor " << (motor_idx + 1) << " -> Command " << value << std::endl;
         }
     }
 

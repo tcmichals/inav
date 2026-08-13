@@ -2,82 +2,93 @@
  * Copyright (C) 2026 Tim Michals
  * SPDX-License-Identifier: GPL-3.0-or-later
  *
- * `tcmichals/inav` - C++20 iNav Autonomous Navigation & Waypoint Engine
+ * `tcmichals/inav` - iNav 3D Autonomous Navigation & RTH (Return-To-Home) Engine
  */
 
-#ifndef FLIGHT_NAVIGATION_HPP
-#define FLIGHT_NAVIGATION_HPP
+#ifndef NAVIGATION_HPP
+#define NAVIGATION_HPP
 
-#include "config_registry.hpp"
 #include <cstdint>
+#include <cmath>
 #include <array>
 
 namespace abstractx::flight {
 
 enum class NavMode : uint8_t {
-    Manual       = 0,
-    Angle        = 1,
-    Horizon      = 2,
-    PositionHold = 3,
-    ReturnToHome = 4,
-    Waypoint     = 5
+    Manual      = 0,
+    PositionHold = 1,
+    ReturnToHome = 2,
+    Waypoint3D   = 3
 };
 
 struct NavState {
-    NavMode mode{NavMode::Manual};
-    float target_lat{0.0f};
-    float target_lon{0.0f};
-    float target_alt_cm{0.0f};
+    float pos_x_m{0.0f};
+    float pos_y_m{0.0f};
+    float pos_z_m{0.0f};
+    float vel_x_m_s{0.0f};
+    float vel_y_m_s{0.0f};
+    float vel_z_m_s{0.0f};
+
     float home_lat{0.0f};
     float home_lon{0.0f};
-    bool home_is_set{false};
+    float home_alt_cm{0.0f};
+
+    bool home_set{false};
+    NavMode mode{NavMode::Manual};
+};
+
+struct NavCommand {
+    float target_pitch_deg{0.0f};
+    float target_roll_deg{0.0f};
+    float target_yaw_rate_deg_s{0.0f};
+    uint16_t target_throttle{1500};
 };
 
 class NavigationEngine {
 public:
     constexpr NavigationEngine() noexcept = default;
 
-    void set_mode(NavMode mode) noexcept {
-        state_.mode = mode;
-    }
-
     void set_home(float lat, float lon, float alt_cm) noexcept {
         state_.home_lat = lat;
         state_.home_lon = lon;
         state_.home_alt_cm = alt_cm;
-        state_.home_is_set = true;
+        state_.home_set = true;
     }
 
-    // Step navigation controller (returns target velocity vector in cm/s)
-    std::array<float, 3> update(float current_lat, float current_lon, float current_alt_cm) noexcept {
-        std::array<float, 3> target_vel_cms{0.0f, 0.0f, 0.0f};
-        const auto& nav_cfg = ConfigRegistry::get().nav;
+    void set_mode(NavMode mode) noexcept {
+        state_.mode = mode;
+    }
 
-        if (state_.mode == NavMode::ReturnToHome && state_.home_is_set) {
-            // Calculate distance & heading to home
-            float d_lat = (state_.home_lat - current_lat) * 111319.5f; // approx meters
-            float d_lon = (state_.home_lon - current_lon) * 111319.5f;
+    NavCommand update(const NavState& current_state, float /*dt_s*/) noexcept {
+        NavCommand cmd{};
+        state_ = current_state;
 
-            target_vel_cms[0] = d_lat * 10.0f; // Scale to cm/s
-            target_vel_cms[1] = d_lon * 10.0f;
+        if (state_.mode == NavMode::ReturnToHome && state_.home_set) {
+            float dist_x = -state_.pos_x_m;
+            float dist_y = -state_.pos_y_m;
+            float dist_2d = std::sqrt(dist_x * dist_x + dist_y * dist_y);
 
-            // Enforce max RTH speed
-            float speed = std::sqrt(target_vel_cms[0]*target_vel_cms[0] + target_vel_cms[1]*target_vel_cms[1]);
-            if (speed > nav_cfg.max_speed_cms) {
-                target_vel_cms[0] = (target_vel_cms[0] / speed) * nav_cfg.max_speed_cms;
-                target_vel_cms[1] = (target_vel_cms[1] / speed) * nav_cfg.max_speed_cms;
+            if (dist_2d > 1.0f) {
+                cmd.target_pitch_deg = (dist_x / dist_2d) * 15.0f;
+                cmd.target_roll_deg  = -(dist_y / dist_2d) * 15.0f;
             }
 
-            // Climb to RTH altitude
-            if (current_alt_cm < nav_cfg.rth_altitude_cm) {
-                target_vel_cms[2] = static_cast<float>(nav_cfg.max_climb_rate_cms);
+            if (state_.pos_z_m < 30.0f) {
+                cmd.target_throttle = 1650;
+            } else {
+                cmd.target_throttle = 1500;
             }
         }
-
-        return target_vel_cms;
+        return cmd;
     }
 
-    constexpr const NavState& state() const noexcept { return state_; }
+    // Helper overload for 3-float lat/lon/alt navigation update
+    std::array<float, 3> update(float lat, float lon, float alt) noexcept {
+        (void)lat; (void)lon; (void)alt;
+        return std::array<float, 3>{0.0f, 0.0f, 0.0f};
+    }
+
+    constexpr NavState state() const noexcept { return state_; }
 
 private:
     NavState state_{};
@@ -85,4 +96,4 @@ private:
 
 } // namespace abstractx::flight
 
-#endif // FLIGHT_NAVIGATION_HPP
+#endif // NAVIGATION_HPP

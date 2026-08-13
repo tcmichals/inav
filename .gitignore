@@ -1,0 +1,6 @@
+build/
+*.bin
+*.bbl
+*.ctf
+*.sr
+*.csv

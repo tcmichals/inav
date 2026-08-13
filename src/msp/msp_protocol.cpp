@@ -2,11 +2,12 @@
  * Copyright (C) 2026 Tim Michals
  * SPDX-License-Identifier: GPL-3.0-or-later
  *
- * `tcmichals/inav` - MultiWii Serial Protocol (MSP v1/v2) C++20 Processor
+ * `tcmichals/inav` - MultiWii Serial Protocol (MSP v1/v2) & CLI Processor
  */
 
 #include "msp_protocol.hpp"
 #include "config_registry.hpp"
+#include "cli_engine.hpp"
 
 namespace abstractx::msp {
 
@@ -46,6 +47,10 @@ bool MspEngine::process_command(Cmd cmd, const std::span<const uint8_t>& rx_payl
             tx_frame.push_u16(0); // Hardware revision
             return true;
 
+        case Cmd::EepromWrite:
+            // Save settings to config.bin file when user clicks "Save and Reboot" in iNav Configurator
+            return ConfigRegistry::save_to_file("config.bin");
+
         case Cmd::Pid:
             // Output Roll, Pitch, Yaw PIDs (scaled by 10 for MSP wire format)
             for (int i = 0; i < 3; ++i) {
@@ -63,12 +68,13 @@ bool MspEngine::process_command(Cmd cmd, const std::span<const uint8_t>& rx_payl
                     config.pid.ki[i] = static_cast<float>(rx_payload[i * 3 + 1]) / 10.0f;
                     config.pid.kd[i] = static_cast<float>(rx_payload[i * 3 + 2]) / 1000.0f;
                 }
+                ConfigRegistry::save_to_file("config.bin");
                 return true;
             }
             return false;
 
         case Cmd::RawImu:
-            // Dummy or HIL IMU stream (Accel X/Y/Z, Gyro X/Y/Z)
+            // HIL IMU stream (Accel X/Y/Z, Gyro X/Y/Z)
             tx_frame.push_u16(0); // Accel X
             tx_frame.push_u16(0); // Accel Y
             tx_frame.push_u16(512); // Accel Z (1G)

@@ -2,16 +2,17 @@
  * Copyright (C) 2026 Tim Michals
  * SPDX-License-Identifier: GPL-3.0-or-later
  *
- * `tcmichals/inav` - C++20 Zero-Linker Configuration Registry
+ * `tcmichals/inav` - Bare-Metal Safe C++20 Configuration Registry & Flash Abstraction
  */
 
 #ifndef CONFIG_REGISTRY_HPP
 #define CONFIG_REGISTRY_HPP
 
+#include "flash_storage.hpp"
 #include <cstdint>
 #include <cstddef>
 #include <array>
-#include <cstring>
+#include <span>
 
 namespace abstractx {
 
@@ -52,7 +53,7 @@ struct alignas(64) MasterConfig {
     NavConfig   nav{};
 };
 
-// Configuration Registry Singleton Engine
+// Configuration Registry Engine with Bare-Metal Safe Flash Storage API
 class ConfigRegistry {
 public:
     static MasterConfig& get() noexcept {
@@ -66,6 +67,38 @@ public:
 
     static bool verify_magic() noexcept {
         return get().magic == 0x41535043;
+    }
+
+    // Load MasterConfig from Flash storage
+    static bool load_from_storage(storage::FlashStorageAdapter& flash) noexcept {
+        MasterConfig temp_cfg{};
+        std::span<uint8_t> rd_span(reinterpret_cast<uint8_t*>(&temp_cfg), sizeof(MasterConfig));
+        
+        if (flash.read(0, rd_span) && temp_cfg.magic == 0x41535043) {
+            get() = temp_cfg;
+            return true;
+        }
+
+        reset_defaults();
+        return save_to_storage(flash);
+    }
+
+    // Save MasterConfig to Flash storage
+    static bool save_to_storage(storage::FlashStorageAdapter& flash) noexcept {
+        std::span<const uint8_t> wr_span(reinterpret_cast<const uint8_t*>(&get()), sizeof(MasterConfig));
+        flash.erase_sector(0);
+        return flash.write(0, wr_span);
+    }
+
+    // SITL File compatibility helper
+    static bool load_from_file(const char* /*filepath*/ = "config.bin") noexcept {
+        storage::FlashStorageAdapter flash{storage::FlashMediumType::PosixFile};
+        return load_from_storage(flash);
+    }
+
+    static bool save_to_file(const char* /*filepath*/ = "config.bin") noexcept {
+        storage::FlashStorageAdapter flash{storage::FlashMediumType::PosixFile};
+        return save_to_storage(flash);
     }
 };
 
