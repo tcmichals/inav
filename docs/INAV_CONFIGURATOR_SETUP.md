@@ -1,6 +1,8 @@
-# iNav Configurator Integration & Setup Guide
+# iNav Configurator TCP Connector & Integration Guide
 
-This document details how to connect the official **iNav Configurator GUI** to `inav-abstractx` over TCP port 5760 on Linux SITL, RP2350 Pico 2 W Wi-Fi, or Linux SBC targets.
+> [!IMPORTANT]
+> **TCP PORT 5760 CONNECTOR FOR INAV CONFIGURATOR**
+> In **`inav-abstractx`**, the non-blocking TCP socket server ([`tcp_configurator_server.hpp`](file:///home/tcmichals/ssdData/projects/home/inav/src/msp/tcp_configurator_server.hpp)) listens on **TCP Port 5760** to handle incoming MSP v1/v2 connections from the official **iNav Configurator GUI**.
 
 ---
 
@@ -13,20 +15,20 @@ This document details how to connect the official **iNav Configurator GUI** to `
 5. Click **Connect**.
 
 ```
-  ┌────────────────────────┐                   ┌────────────────────────┐
-  │  iNav Configurator GUI │ ─── TCP 5760 ───> │  inav-abstractx SITL   │
-  │  (3D Model, PID, CLI)  │ <── MSP v1/v2 ─── │  (msp_server.cpp)     │
-  └────────────────────────┘                   └────────────────────────┘
+  ┌────────────────────────┐                   ┌────────────────────────────┐
+  │  iNav Configurator GUI │ ─── TCP 5760 ───> │  TcpConfiguratorServer     │
+  │  (3D Model, PID, CLI)  │ <── MSP v1/v2 ─── │  (tcp_configurator_server) │
+  └────────────────────────┘                   └────────────────────────────┘
 ```
 
 ---
 
-## 2. Supported MSP Commands & Configurator Tabs
+## 2. Server Architecture & Configurator Feature Support
 
-| Configurator Tab | MSP Command Handlers (`msp_server.cpp`) | Implementation Verification |
+| Configurator Tab | MSP Commands Handled | Server File |
 | :--- | :--- | :--- |
-| **Setup / 3D Model** | `Cmd::ApiVersion`, `Cmd::FcVariant`, `Cmd::Attitude` | Real-time roll/pitch/yaw model rendering |
-| **Sensors** | `Cmd::RawImu`, `Cmd::Altitude`, `Cmd::CompassHeading` | Real-time 8 kHz IMU, Baro, & Mag telemetry graphs |
-| **PID Tuning** | `Cmd::Pid`, `Cmd::SetPid` | Live 3-axis PID loop tuning |
-| **Motors** | `Cmd::Motor`, `Cmd::SetMotor` | Individual DShot motor channel output testing |
-| **CLI Command Line** | CLI Engine ([`cli_engine.hpp`](file:///home/tcmichals/ssdData/projects/home/inav/src/config/cli_engine.hpp)) | Commands: `version`, `status`, `dump`, `set`, `save` |
+| **Setup / 3D Model** | `Cmd::ApiVersion`, `Cmd::FcVariant`, `Cmd::Attitude` | [`tcp_configurator_server.hpp`](file:///home/tcmichals/ssdData/projects/home/inav/src/msp/tcp_configurator_server.hpp) |
+| **Sensors** | `Cmd::RawImu`, `Cmd::Altitude`, `Cmd::CompassHeading` | [`msp_server.cpp`](file:///home/tcmichals/ssdData/projects/home/inav/src/msp/msp_server.cpp) |
+| **PID Tuning** | `Cmd::Pid`, `Cmd::SetPid` | [`config_registry.hpp`](file:///home/tcmichals/ssdData/projects/home/inav/src/config/config_registry.hpp) |
+| **Motors** | `Cmd::Motor`, `Cmd::SetMotor` | [`dshot.hpp`](file:///home/tcmichals/ssdData/projects/home/inav/src/drivers/esc/dshot.hpp) |
+| **CLI Command Line** | CLI Engine (`status`, `version`, `dump`, `set`, `save`) | [`cli_engine.hpp`](file:///home/tcmichals/ssdData/projects/home/inav/src/config/cli_engine.hpp) |
