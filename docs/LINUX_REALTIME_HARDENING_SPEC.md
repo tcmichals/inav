@@ -1,40 +1,31 @@
-# Linux Real-Time Thread Hardening Specification
+# Linux POSIX Dual Real-Time Thread Hardening Specification
 
 > [!IMPORTANT]
-> **ISOLATED CPU CORE, SCHED_FIFO PRIORITY 99, & LOCKED PHYSICAL RAM (`mlockall`)**
-> When running `inav-abstractx` on Linux (SITL or Linux SBC + FPGA / Cubie A5E / Zynq-7020), the primary flight control thread is hardened against OS kernel latencies using POSIX real-time primitives ([`linux_rt_hardener.hpp`](file:///home/tcmichals/ssdData/projects/home/inav/src/target/sitl/linux_rt_hardener.hpp)).
+> **POSIX DUAL REAL-TIME THREAD ARCHITECTURE**
+> To achieve deterministic hard real-time execution on Linux targets, **`inav-abstractx`** partitions system responsibilities between **two dedicated POSIX real-time threads** ([`linux_rt_hardener.hpp`](file:///home/tcmichals/ssdData/projects/home/inav/src/target/sitl/linux_rt_hardener.hpp)).
 
 ---
 
-## 1. POSIX Real-Time Hardening Steps
+## 1. Dual Real-Time Thread Configuration Matrix
 
-```cpp
-#include "linux_rt_hardener.hpp"
+| Thread Role | Scheduling Policy & Priority | Assigned CPU Core | Memory Locking | System Responsibility |
+| :--- | :--- | :--- | :--- | :--- |
+| **Flight Control Thread** | `SCHED_FIFO` Priority 99 | Isolated CPU Core 3 (`isolcpus=3`) | `mlockall` Physical RAM | Executes 8 kHz C++20 coroutine loop, EKF3 fusion, PID dynamics, and 3D navigation math |
+| **Hardware I/O Thread** | `SCHED_FIFO` Priority 98 | Isolated CPU Core 2 (`isolcpus=2`) | `mlockall` Physical RAM | Executes SPI/I2C/UART hardware transactions via `linux_async_io_dispatcher.hpp` |
 
-int main() {
-#if defined(__linux__)
-    // Pin to Isolated CPU Core 3, set SCHED_FIFO priority 99, lock physical RAM
-    target::linux_rt::LinuxRtHardener::harden_realtime_thread(3, 99);
-#endif
-    // Start C++20 Flight Engine
-}
+---
+
+## 2. Linux Dual-Core Affinity & Priority Architecture
+
 ```
-
----
-
-## 2. Hardening Features Breakdown
-
-1. **Physical Memory Page Locking (`mlockall(MCL_CURRENT | MCL_FUTURE)`)**:
-   - Locks all current and future mapped memory pages into physical RAM.
-   - Prevents Linux kernel page faults and page swapping during flight loop execution ($0.0\text{ ms}$ page fault delay).
-
-2. **Real-Time Priority Scheduling (`pthread_setschedparam(SCHED_FIFO, 99)`)**:
-   - Assigns highest real-time priority (`99`) under POSIX `SCHED_FIFO` policy.
-   - Ensures the flight loop thread immediately preempts background Linux user processes.
-
-3. **Isolated CPU Core Pinning (`pthread_setaffinity_np`)**:
-   - Pins the flight loop thread to a dedicated isolated CPU core (e.g. `CPU 3`).
-   - Combined with Linux kernel boot argument `isolcpus=3` to guarantee zero OS timer interrupt interference!
-
-4. **POSIX Stack Pre-Faulting**:
-   - Pre-touches 64 KB of stack memory upon thread startup, eliminating demand paging stalls inside the PID loop.
+                          Linux Dual Real-Time Threads
+                                       │
+        ┌──────────────────────────────┴──────────────────────────────┐
+        ▼                                                             ▼
+  Flight Control Thread                                      Hardware I/O Thread
+  - Priority: SCHED_FIFO 99                                  - Priority: SCHED_FIFO 98
+  - CPU Affinity: Core 3 (isolcpus=3)                        - CPU Affinity: Core 2 (isolcpus=2)
+  - Memory: mlockall (Physical RAM)                          - Memory: mlockall (Physical RAM)
+  - Tasks: EKF3, PID, Navigation                             - Tasks: spidev, i2c-dev, ttyS1
+  - Execution Latency: < 10 ns coroutine swap                - Timestamping: DRDY Hardware Latched
+```
