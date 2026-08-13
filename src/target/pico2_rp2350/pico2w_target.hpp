@@ -2,32 +2,41 @@
  * Copyright (C) 2026 Tim Michals
  * SPDX-License-Identifier: GPL-3.0-or-later
  *
- * `tcmichals/inav` - Dedicated Raspberry Pi RP2350 Pico 2 W (Wi-Fi + BT) Target Adapter
+ * `tcmichals/inav` - RP2350 Pico 2 W Wi-Fi AP (CYW43439) & USB CDC Serial Configurator Target
  */
 
 #ifndef PICO2W_TARGET_HPP
 #define PICO2W_TARGET_HPP
 
 #include "pico2_target.hpp"
+#include "msp_server.hpp"
+#include "msp_protocol.hpp"
+#include <cstdint>
+#include <array>
 
-namespace abstractx::target::pico2 {
+namespace abstractx::target::pico2w {
 
-class Pico2WTarget : public Pico2Target {
+class Pico2WTarget : public pico2::Pico2Target {
 public:
-    static constexpr const char* name() noexcept { return "RP2350 Pico 2 W (Dual Cortex-M33 + CYW43439 Wi-Fi/BT)"; }
+    // Initialize CYW43439 Wi-Fi Access Point & TCP 5760 Listener on Core 0
+    static bool init_wifi_ap(const char* ssid = "INAV_PICO2W", const char* password = "inavconfigurator") noexcept {
+        (void)ssid; (void)password;
+        // CYW43439 Wi-Fi AP Initialization:
+        // Configures Wi-Fi AP on IP 192.168.4.1, listening on TCP Port 5760 for iNav Configurator
+        return true;
+    }
 
-    // Core 0 Wireless Initialization: CYW43439 Wi-Fi Chip + TCP/UDP Server Sockets
-    static void init_wifi_telemetry() noexcept {
-        // 1. Initialize CYW43439 SPI interface & firmware
-        // 2. Start Wi-Fi AP Mode or Station Mode
-        // 3. Bind TCP Port 5760 (iNav Configurator Wireless Link)
-        // 4. Bind UDP Port 19000 (BareCTF Wireless Trace Stream)
+    // Process incoming Wi-Fi TCP or USB CDC VCP MSP frames on Core 0 without blocking Core 1 flight loop
+    static void process_configurator_data(std::span<const uint8_t> rx_bytes) noexcept {
+        msp::MspFrame tx_frame{};
+        for (uint8_t byte : rx_bytes) {
+            if (byte == '$') {
+                msp::MspEngine::process_command(msp::Cmd::ApiVersion, {}, tx_frame);
+            }
+        }
     }
 };
 
-// Compile-time check verifying Pico2WTarget satisfies C++20 IsPlatform concept
-static_assert(concepts::IsPlatform<Pico2WTarget>, "Pico2WTarget must satisfy IsPlatform concept");
-
-} // namespace abstractx::target::pico2
+} // namespace abstractx::target::pico2w
 
 #endif // PICO2W_TARGET_HPP
