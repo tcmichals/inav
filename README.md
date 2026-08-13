@@ -1,4 +1,4 @@
-# `inav-abstractx` Flight Control Engine (`pcie-clean` branch)
+# `inav-abstractx` Flight Control Engine (`main` branch)
 
 `inav-abstractx` is a C++20 port of the iNav autonomous navigation suite combined with Betaflight flight dynamics, implemented over the **AbstractX PCIe TLP Hardware Abstraction Layer**. It supports configuration via the **iNav Configurator** protocol over MSP.
 
@@ -36,40 +36,27 @@ To configure, open **iNav Configurator**, select **TCP** connection to `127.0.0.
 
 1. **Autonomous Navigation**: 3D Return-To-Home (RTH), Waypoints, Position Hold, and Safehomes.
 2. **Flight Dynamics**: 3-axis PID controller with PT1/PT2 D-term filtering, Feedforward, and DShot motor output generation.
-3. **Linux Single Real-Time Core Architecture (`isolcpus=3`)**: System master specification ([`docs/LINUX_THREADING_ARCHITECTURE_MASTER_SPEC.md`](file:///home/tcmichals/ssdData/projects/home/inav/docs/LINUX_THREADING_ARCHITECTURE_MASTER_SPEC.md)) detailing single isolated real-time CPU Core 3 (`SCHED_FIFO` Priority 99) executing the 8 kHz C++20 flight loop AND non-blocking `epoll` I/O reactor with $> 96\%$ idle headroom. Non-RT background disk logging and TCP Configurator run on Core 0.
+3. **Master Linux Quad-Core Flight System Specification**: Master system specification ([`docs/LINUX_SYSTEM_ARCHITECTURE.md`](file:///home/tcmichals/ssdData/projects/home/inav/docs/LINUX_SYSTEM_ARCHITECTURE.md)) detailing CPU Core 3 (Flight Control), Core 2 (Hardware I/O Reactor), Core 1 (RPMsg RISC-V/FPGA Transport), and Core 0 (Linux OS, TCP 5760, UDP 19000, Disk Logger).
 4. **RP2350 Pico 2 W Wi-Fi & USB Configurator Target**: Target specification ([`docs/PICO2W_PINOUT_SPEC.md`](file:///home/tcmichals/ssdData/projects/home/inav/docs/PICO2W_PINOUT_SPEC.md)) detailing CYW43439 Wi-Fi AP (`INAV_PICO2W` IP `192.168.4.1:5760`) and USB CDC virtual COM port.
-5. **iNav Configurator TCP Connector (Port 5760)**: Setup guide ([`docs/INAV_CONFIGURATOR_SETUP.md`](file:///home/tcmichals/ssdData/projects/home/inav/docs/INAV_CONFIGURATOR_SETUP.md)) for TCP socket server connector ([`tcp_configurator_server.hpp`](file:///home/tcmichals/ssdData/projects/home/inav/src/msp/tcp_configurator_server.hpp)).
+5. **iNav Configurator TCP Connector (Port 5760)**: Setup guide ([`docs/INAV_CONFIGURATOR_SETUP.md`](file:///home/tcmichals/ssdData/projects/home/inav/docs/INAV_CONFIGURATOR_SETUP.md)).
 6. **TCP vs UDP Protocol Transport**: Protocol specification ([`docs/TELEMETRY_TRANSPORT_SPEC.md`](file:///home/tcmichals/ssdData/projects/home/inav/docs/TELEMETRY_TRANSPORT_SPEC.md)).
-7. **Linux Disk I/O & TCP Background Threads**: Thread architecture specification ([`docs/LINUX_BACKGROUND_THREADS_SPEC.md`](file:///home/tcmichals/ssdData/projects/home/inav/docs/LINUX_BACKGROUND_THREADS_SPEC.md)).
-8. **Linux `PREEMPT_RT` Enabled Hard Real-Time Target**: Real-time specification ([`docs/LINUX_PREEMPT_RT_SCHEDULER_SPEC.md`](file:///home/tcmichals/ssdData/projects/home/inav/docs/LINUX_PREEMPT_RT_SCHEDULER_SPEC.md)).
-9. **Linux 1.0 GHz Single-Core Unified Execution**: Architecture specification ([`docs/LINUX_REALTIME_HARDENING_SPEC.md`](file:///home/tcmichals/ssdData/projects/home/inav/docs/LINUX_REALTIME_HARDENING_SPEC.md)).
-10. **Linux Native `epoll` Asynchronous Event Reactor**: Multi-peripheral event reactor specification ([`docs/LINUX_EPOLL_EVENT_REACTOR_SPEC.md`](file:///home/tcmichals/ssdData/projects/home/inav/docs/LINUX_EPOLL_EVENT_REACTOR_SPEC.md)).
-11. **Allwinner Cubie A5E RISC-V + FPGA Synergy**: Hardware offloading specification ([`docs/A5E_RISCV_FPGA_SPEC.md`](file:///home/tcmichals/ssdData/projects/home/inav/docs/A5E_RISCV_FPGA_SPEC.md)).
-12. **Linux Asynchronous Non-Blocking I/O Dispatch**: Parallel hardware dispatch specification ([`docs/LINUX_ASYNC_IO_DISPATCH_SPEC.md`](file:///home/tcmichals/ssdData/projects/home/inav/docs/LINUX_ASYNC_IO_DISPATCH_SPEC.md)).
-13. **Coroutine Telemetry & `co_await` Flow**: End-to-end telemetry streaming flow specification ([`docs/COROUTINE_TELEMETRY_FLOW_SPEC.md`](file:///home/tcmichals/ssdData/projects/home/inav/docs/COROUTINE_TELEMETRY_FLOW_SPEC.md)).
-14. **Master Validation Pipeline (`tools/run_all_validations.py`)**: Unified Python runner ([`docs/PYTHON_VALIDATION_WORKFLOW.md`](file:///home/tcmichals/ssdData/projects/home/inav/docs/PYTHON_VALIDATION_WORKFLOW.md)).
-15. **Offline Logic Analyzer Signal Testing**: Verification guide ([`docs/LOGIC_ANALYZER_TESTING_GUIDE.md`](file:///home/tcmichals/ssdData/projects/home/inav/docs/LOGIC_ANALYZER_TESTING_GUIDE.md)).
-16. **Hardcore Hardware Validation Guidelines**: Failure mode testing checklist ([`docs/HARDCORE_HARDWARE_TESTING_GUIDELINES.md`](file:///home/tcmichals/ssdData/projects/home/inav/docs/HARDCORE_HARDWARE_TESTING_GUIDELINES.md)).
-17. **Hardware Validation Target (`pico2_hw_test`)**: Dedicated validation binary running on Pico 2 W hardware and Linux.
-18. **Hardware Abstraction**: AbstractX PCIe TLP BAR memory interface (`asp_tlp64.hpp`).
-19. **RP2350 Dual-Core Offloading**: Core 0 manages PIO state machines, Core 1 runs 8 kHz C++20 coroutine flight loop.
-20. **Dynamic Motor Pin Multiplexing**: PIO0 microcode hot-swapping on GPIO pins 2..5.
-21. **Zero Dynamic Allocation**: C++20 coroutines execute within static promise pools (`CoroutineStaticPool`).
+7. **Coroutine Telemetry & `co_await` Flow**: End-to-end telemetry streaming flow specification ([`docs/COROUTINE_TELEMETRY_FLOW_SPEC.md`](file:///home/tcmichals/ssdData/projects/home/inav/docs/COROUTINE_TELEMETRY_FLOW_SPEC.md)).
+8. **Master Validation Pipeline (`tools/run_all_validations.py`)**: Unified Python runner ([`docs/PYTHON_VALIDATION_WORKFLOW.md`](file:///home/tcmichals/ssdData/projects/home/inav/docs/PYTHON_VALIDATION_WORKFLOW.md)).
+9. **Offline Logic Analyzer Signal Testing**: Verification guide ([`docs/LOGIC_ANALYZER_TESTING_GUIDE.md`](file:///home/tcmichals/ssdData/projects/home/inav/docs/LOGIC_ANALYZER_TESTING_GUIDE.md)).
+10. **Hardcore Hardware Validation Guidelines**: Failure mode testing checklist ([`docs/HARDCORE_HARDWARE_TESTING_GUIDELINES.md`](file:///home/tcmichals/ssdData/projects/home/inav/docs/HARDCORE_HARDWARE_TESTING_GUIDELINES.md)).
+11. **Hardware Validation Target (`pico2_hw_test`)**: Dedicated validation binary running on Pico 2 W hardware and Linux.
+12. **Hardware Abstraction**: AbstractX PCIe TLP BAR memory interface (`asp_tlp64.hpp`).
+13. **RP2350 Dual-Core Offloading**: Core 0 manages PIO state machines, Core 1 runs 8 kHz C++20 coroutine flight loop.
+14. **Dynamic Motor Pin Multiplexing**: PIO0 microcode hot-swapping on GPIO pins 2..5.
+15. **Zero Dynamic Allocation**: C++20 coroutines execute within static promise pools (`CoroutineStaticPool`).
 
 ---
 
 ## Documentation Index
 
-- [`docs/LINUX_THREADING_ARCHITECTURE_MASTER_SPEC.md`](file:///home/tcmichals/ssdData/projects/home/inav/docs/LINUX_THREADING_ARCHITECTURE_MASTER_SPEC.md): Linux single real-time core architecture master specification.
+- [`docs/LINUX_SYSTEM_ARCHITECTURE.md`](file:///home/tcmichals/ssdData/projects/home/inav/docs/LINUX_SYSTEM_ARCHITECTURE.md): Master Linux quad-core flight system architecture & threading specification.
 - [`docs/INAV_CONFIGURATOR_SETUP.md`](file:///home/tcmichals/ssdData/projects/home/inav/docs/INAV_CONFIGURATOR_SETUP.md): iNav Configurator GUI setup & MSP command integration guide.
 - [`docs/TELEMETRY_TRANSPORT_SPEC.md`](file:///home/tcmichals/ssdData/projects/home/inav/docs/TELEMETRY_TRANSPORT_SPEC.md): TCP vs UDP network telemetry transport specification.
-- [`docs/LINUX_BACKGROUND_THREADS_SPEC.md`](file:///home/tcmichals/ssdData/projects/home/inav/docs/LINUX_BACKGROUND_THREADS_SPEC.md): Linux disk I/O & TCP telemetry background thread specification.
-- [`docs/LINUX_PREEMPT_RT_SCHEDULER_SPEC.md`](file:///home/tcmichals/ssdData/projects/home/inav/docs/LINUX_PREEMPT_RT_SCHEDULER_SPEC.md): Linux `PREEMPT_RT` real-time kernel enabled specification.
-- [`docs/LINUX_REALTIME_HARDENING_SPEC.md`](file:///home/tcmichals/ssdData/projects/home/inav/docs/LINUX_REALTIME_HARDENING_SPEC.md): Linux 1.0 GHz single-core unified real-time execution specification.
-- [`docs/LINUX_EPOLL_EVENT_REACTOR_SPEC.md`](file:///home/tcmichals/ssdData/projects/home/inav/docs/LINUX_EPOLL_EVENT_REACTOR_SPEC.md): Linux native `epoll` asynchronous multi-peripheral event reactor specification.
-- [`docs/A5E_RISCV_FPGA_SPEC.md`](file:///home/tcmichals/ssdData/projects/home/inav/docs/A5E_RISCV_FPGA_SPEC.md): Allwinner Cubie A5E RISC-V co-processor & FPGA offloader specification.
-- [`docs/LINUX_ASYNC_IO_DISPATCH_SPEC.md`](file:///home/tcmichals/ssdData/projects/home/inav/docs/LINUX_ASYNC_IO_DISPATCH_SPEC.md): Linux non-blocking SPI/I2C/UART asynchronous hardware dispatch specification.
-- [`docs/COROUTINE_TELEMETRY_FLOW_SPEC.md`](file:///home/tcmichals/ssdData/projects/home/inav/docs/COROUTINE_TELEMETRY_FLOW_SPEC.md): Lock-free SPSC TLP ring buffer & `co_await` telemetry streaming flow specification.
 - [`docs/PYTHON_VALIDATION_WORKFLOW.md`](file:///home/tcmichals/ssdData/projects/home/inav/docs/PYTHON_VALIDATION_WORKFLOW.md): Automated Python validation pipeline & file output workflow guide.
 - [`docs/LOGIC_ANALYZER_TESTING_GUIDE.md`](file:///home/tcmichals/ssdData/projects/home/inav/docs/LOGIC_ANALYZER_TESTING_GUIDE.md): Offline Saleae 8-pin & Kingst logic analyzer signal verification guide.
 - [`docs/HARDCORE_HARDWARE_TESTING_GUIDELINES.md`](file:///home/tcmichals/ssdData/projects/home/inav/docs/HARDCORE_HARDWARE_TESTING_GUIDELINES.md): Comprehensive failure mode and hardware stress testing guidelines.
@@ -80,7 +67,6 @@ To configure, open **iNav Configurator**, select **TCP** connection to `127.0.0.
 - [`docs/RT_OFFLOADER_FPGA_SYNERGY.md`](file:///home/tcmichals/ssdData/projects/home/inav/docs/RT_OFFLOADER_FPGA_SYNERGY.md): Overview of hardware offloading parity between `rt_offloader` FPGA and RP2350 PIO state machines.
 - [`docs/PICO2_PIO_DYNAMIC_RELOAD_SPEC.md`](file:///home/tcmichals/ssdData/projects/home/inav/docs/PICO2_PIO_DYNAMIC_RELOAD_SPEC.md): Dynamic PIO microcode reloading specification for DShot, OneShot, PWM, and BLHeli serial passthrough.
 - [`docs/PICO2_BARE_METAL_VS_RTOS.md`](file:///home/tcmichals/ssdData/projects/home/inav/docs/PICO2_BARE_METAL_VS_RTOS.md): Technical comparison of RP2350 bare-metal dual-core execution vs preemptive RTOS.
-- [`docs/LINUX_REALTIME_HARDENING_SPEC.md`](file:///home/tcmichals/ssdData/projects/home/inav/docs/LINUX_REALTIME_HARDENING_SPEC.md): POSIX real-time thread hardening specification for Linux (`mlockall`, `SCHED_FIFO`, CPU affinity).
 - [`docs/RTOS_VS_COROUTINES_ANALYSIS.md`](file:///home/tcmichals/ssdData/projects/home/inav/docs/RTOS_VS_COROUTINES_ANALYSIS.md): Real-time execution model analysis comparing preemptive RTOS and C++20 coroutines.
 - [`docs/LEGACY_VS_NEW_DIFFERENTIAL_TESTING.md`](file:///home/tcmichals/ssdData/projects/home/inav/docs/LEGACY_VS_NEW_DIFFERENTIAL_TESTING.md): Differential parity testing specification (`tools/compare_inav_parity.py`).
 - [`docs/UNIT_TEST_SPEC.md`](file:///home/tcmichals/ssdData/projects/home/inav/docs/UNIT_TEST_SPEC.md): Unit test suite specification (`./run_unit_tests`).
