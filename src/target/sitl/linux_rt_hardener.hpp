@@ -2,7 +2,7 @@
  * Copyright (C) 2026 Tim Michals
  * SPDX-License-Identifier: GPL-3.0-or-later
  *
- * `tcmichals/inav` - Linux POSIX Multi-Thread Real-Time Hardener (SCHED_FIFO Priorities 99/98/97)
+ * `tcmichals/inav` - Linux POSIX Real-Time Thread Hardener (1.0 GHz Single-Core / Multi-Core Modes)
  */
 
 #ifndef LINUX_RT_HARDENER_HPP
@@ -19,19 +19,19 @@ namespace abstractx::target::sitl {
 
 class LinuxRtHardener {
 public:
-    // Thread 1: Flight Control Real-Time Thread (Priority 99, CPU Core 3)
+    // Single 1.0 GHz CPU Core Mode (Flight Loop + epoll Reactor on CPU Core 3, SCHED_FIFO Priority 99)
+    static bool harden_single_core_unified(uint32_t cpu_core_id = 3) noexcept {
+        return configure_thread(pthread_self(), 99, cpu_core_id);
+    }
+
+    // Configure Flight Loop Real-Time Thread (Priority 99, CPU Core 3)
     static bool harden_flight_thread(uint32_t cpu_core_id = 3) noexcept {
         return configure_thread(pthread_self(), 99, cpu_core_id);
     }
 
-    // Thread 2: Hardware I/O Offloader Thread (Priority 98, CPU Core 2)
+    // Configure Hardware I/O Offloader Thread (Priority 98, CPU Core 2)
     static bool harden_io_thread(pthread_t io_thread_handle, uint32_t cpu_core_id = 2) noexcept {
         return configure_thread(io_thread_handle, 98, cpu_core_id);
-    }
-
-    // Thread 3: RISC-V RPMsg / SPI Transport Worker Thread (Priority 97, CPU Core 1)
-    static bool harden_rpmsg_thread(pthread_t rpmsg_thread_handle, uint32_t cpu_core_id = 1) noexcept {
-        return configure_thread(rpmsg_thread_handle, 97, cpu_core_id);
     }
 
     // Lock Physical Memory Pages & Pre-Fault Stack Space
