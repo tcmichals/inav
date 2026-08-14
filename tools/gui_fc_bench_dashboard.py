@@ -1,23 +1,23 @@
 #!/usr/bin/env python3
 """
-`inav-abstractx` - Graphical Flight Controller Bench QA, Calibration & Guided Setup Wizard
-Built using `imgui-bundle` (Dear ImGui + ImPlot for Python).
+`inav-abstractx` - High-Fidelity Graphical Flight Controller Bench QA, Calibration & Setup Suite
+Built using `imgui-bundle` (Dear ImGui + ImPlot + Custom 3D Vector Canvas).
 
-Features:
-1. End-to-End Guided Craft Commissioning Wizard (QuadX, Octo-X8, Hexa, Flat-8, Plane)
-2. Hardware Peripheral Tests (Status LED, Buzzer Beep, 4-8 Motor Direction Sequencer)
-3. Live 3D Attitude Gauges & IMU Gyro/Accel/Baro Telemetry
-4. Dedicated 3D Magnetometer / Compass Calibration Suite with Live ImPlot Ellipsoid Scatter
-5. Full 6-Point Accelerometer Level & Scale Calibration Wizard
-6. Live RC Transmitter Stick & Channel Visualizer (16 Channels)
-7. GPS Constellation Lock, HDOP & Satellite Visualizer
-8. Flash EEPROM Save & Parameter Verification
+Key Visual & Interactive Features:
+1. Live 3D Perspective Wireframe Drone Viewport with Real-Time Pitch/Roll/Yaw Rotation
+2. Animated High-Speed Spinning Propeller Discs with Directional Blurs (CW / CCW)
+3. EFIS Primary Flight Display (PFD) Artificial Horizon HUD with Pitch Ladders & Roll Arcs
+4. Dual Transmitter Stick Gimbals with Live Crosshair Stick Motion (AETR / TAER)
+5. End-to-End Guided Commissioning Wizard for QuadX, Octo-X8, Flat-8, Hexa & Wings
+6. Dedicated 3D Magnetometer Scatter Ellipsoid Calibration Suite
+7. 6-Point Accelerometer Orthogonal Alignment Wizard
 """
 
 import sys
 import socket
 import struct
 import time
+import math
 import threading
 import numpy as np
 from imgui_bundle import imgui, hello_imgui, implot
@@ -73,7 +73,8 @@ class DashboardState:
         self.accel_g = [0.0, 0.0, 1.0]
         self.gyro_dps = [0.0, 0.0, 0.0]
         self.mag_raw = [0, 0, 0]
-        self.rc_channels = [1500, 1500, 1500, 1000] + [1000] * 12
+        self.rc_channels = [1500, 1500, 1000, 1500] + [1000] * 12 # AETR
+        self.motor_pwm = [1000] * 8
         self.gps_fix = 0
         self.gps_sats = 0
         self.gps_hdop = 9.99
@@ -83,12 +84,16 @@ class DashboardState:
         self.sensor_flags = 0
         self.arming_flags = 0
 
+        # Animation State
+        self.prop_angles = [0.0] * 8
+        self.last_anim_time = time.time()
+
         # Guided Setup Wizard State
         self.wizard_step = 1
-        self.airframe_type_idx = 0  # 0: QuadX (4), 1: Octo-X8 (8), 2: Flat Octo (8), 3: Hexa (6), 4: Flying Wing
-        self.rx_protocol_idx = 0    # 0: CRSF/ELRS, 1: SBUS, 2: Spektrum SRXL2, 3: IBUS
-        self.channel_map_idx = 0    # 0: AETR1234, 1: TAER1234
-        self.arm_switch_idx = 0     # 0: AUX 1, 1: AUX 2, 2: AUX 3, 3: AUX 4
+        self.airframe_type_idx = 0  # 0: QuadX, 1: Octo-X8, 2: Flat Octo, 3: Hexa, 4: Wing
+        self.rx_protocol_idx = 0
+        self.channel_map_idx = 0
+        self.arm_switch_idx = 0
         self.led_state = False
         self.buzzer_state = False
 
@@ -168,25 +173,16 @@ class DashboardState:
             except Exception:
                 return b''
 
-    def start_mag_calibration(self):
-        self.mag_cal_active = True
-        self.mag_cal_start_time = time.time()
-        self.mag_samples_x.clear()
-        self.mag_samples_y.clear()
-        self.mag_samples_z.clear()
-        self.mag_min = [99999, 99999, 99999]
-        self.mag_max = [-99999, -99999, -99999]
-        self.send_msp(MSP_MAG_CALIBRATION)
-        self.status_msg = "Compass Calibration Active! Rotate the aircraft in 360-degree spheres."
-
     def spin_motor(self, m_idx: int, pwm: int):
         m = [1000] * 8
         if 0 <= m_idx < 8:
             m[m_idx] = pwm
+            self.motor_pwm[m_idx] = pwm
         payload = struct.pack('<HHHHHHHH', *m)
         self.send_msp(MSP_SET_MOTOR, payload)
 
     def stop_all_motors(self):
+        self.motor_pwm = [1000] * 8
         payload = struct.pack('<HHHHHHHH', 1000, 1000, 1000, 1000, 1000, 1000, 1000, 1000)
         self.send_msp(MSP_SET_MOTOR, payload)
 
@@ -222,14 +218,22 @@ def telemetry_poll_thread():
                     g_state.mag_max[1] = max(g_state.mag_max[1], my)
                     g_state.mag_max[2] = max(g_state.mag_max[2], mz)
 
-            # 3. Poll RC Channels
+            # 3. Poll Motor Outputs
+            p = g_state.send_msp(MSP_MOTOR)
+            if p and len(p) >= 8:
+                num_m = min(8, len(p) // 2)
+                motors = struct.unpack(f'<{num_m}H', p[:num_m*2])
+                for i in range(num_m):
+                    g_state.motor_pwm[i] = motors[i]
+
+            # 4. Poll RC Channels
             p = g_state.send_msp(MSP_RC)
             if p and len(p) >= 8:
                 num_ch = len(p) // 2
                 channels = struct.unpack(f'<{num_ch}H', p[:num_ch*2])
                 g_state.rc_channels = list(channels)
 
-            # 4. Poll GPS
+            # 5. Poll GPS
             p = g_state.send_msp(MSP_RAW_GPS)
             if p and len(p) >= 18:
                 fix, sats, lat, lon, alt, spd, crs, hdop = struct.unpack('<BBiihhhH', p[:18])
@@ -239,14 +243,14 @@ def telemetry_poll_thread():
                 g_state.gps_lon = lon / 1e7
                 g_state.gps_hdop = hdop / 100.0
 
-            # 5. Poll Altitude
+            # 6. Poll Altitude
             p = g_state.send_msp(MSP_ALTITUDE)
             if p and len(p) >= 6:
                 alt, var = struct.unpack('<ih', p[:6])
                 g_state.alt_m = alt / 100.0
                 g_state.vario_cms = var
 
-            # 6. Poll FC Status
+            # 7. Poll FC Status
             p = g_state.send_msp(MSP_STATUS)
             if p and len(p) >= 10:
                 cyc, i2c, sens, arm = struct.unpack('<HHHI', p[:10])
@@ -254,50 +258,316 @@ def telemetry_poll_thread():
                 g_state.sensor_flags = sens
                 g_state.arming_flags = arm
 
-        time.sleep(0.04) # 25 Hz UI Refresh
+        time.sleep(0.033) # 30 Hz Telemetry Loop
 
+# ---------------------------------------------------------------------------
+# 3D Math Helper: Perspective Projection & Euler Rotation Matrix
+# ---------------------------------------------------------------------------
+def project_3d(x, y, z, roll_rad, pitch_rad, yaw_rad, center_x, center_y, scale=120.0):
+    # 1. Roll rotation (around X)
+    cr, sr = math.cos(roll_rad), math.sin(roll_rad)
+    y1 = y * cr - z * sr
+    z1 = y * sr + z * cr
+
+    # 2. Pitch rotation (around Y)
+    cp, sp = math.cos(pitch_rad), math.sin(pitch_rad)
+    x2 = x * cp + z1 * sp
+    z2 = -x * sp + z1 * cp
+
+    # 3. Yaw rotation (around Z)
+    cy, sy = math.cos(yaw_rad), math.sin(yaw_rad)
+    x3 = x2 * cy - y1 * sy
+    y3 = x2 * sy + y1 * cy
+    z3 = z2
+
+    # Perspective division
+    dist = 400.0
+    fov = dist / (dist + z3)
+    screen_x = center_x + x3 * fov * scale
+    screen_y = center_y - y3 * fov * scale
+    return imgui.ImVec2(screen_x, screen_y)
+
+# ---------------------------------------------------------------------------
+# Custom Canvas Renderer: 3D Graphical Drone & Animated Spinning Propellers
+# ---------------------------------------------------------------------------
+def render_3d_craft_canvas(draw_list, origin_pos, canvas_size):
+    center_x = origin_pos.x + canvas_size.x * 0.5
+    center_y = origin_pos.y + canvas_size.y * 0.5
+
+    # Background grid & viewport frame
+    col_bg = imgui.color_convert_float4_to_u32(imgui.ImVec4(0.07, 0.09, 0.12, 1.0))
+    col_border = imgui.color_convert_float4_to_u32(imgui.ImVec4(0.18, 0.28, 0.38, 1.0))
+    col_grid = imgui.color_convert_float4_to_u32(imgui.ImVec4(0.12, 0.16, 0.22, 1.0))
+
+    draw_list.add_rect_filled(origin_pos, imgui.ImVec2(origin_pos.x + canvas_size.x, origin_pos.y + canvas_size.y), col_bg, 8.0)
+    draw_list.add_rect(origin_pos, imgui.ImVec2(origin_pos.x + canvas_size.x, origin_pos.y + canvas_size.y), col_border, 8.0, 0, 1.5)
+
+    # Grid lines
+    for i in range(1, 6):
+        gx = origin_pos.x + canvas_size.x * (i / 6.0)
+        draw_list.add_line(imgui.ImVec2(gx, origin_pos.y), imgui.ImVec2(gx, origin_pos.y + canvas_size.y), col_grid, 1.0)
+        gy = origin_pos.y + canvas_size.y * (i / 6.0)
+        draw_list.add_line(imgui.ImVec2(origin_pos.x, gy), imgui.ImVec2(origin_pos.x + canvas_size.x, gy), col_grid, 1.0)
+
+    # Current attitude angles (radians)
+    r_rad = math.radians(g_state.roll_deg)
+    p_rad = math.radians(-g_state.pitch_deg)
+    y_rad = math.radians(g_state.yaw_deg)
+
+    # Update animation time & propeller spin angles
+    now = time.time()
+    dt = now - g_state.last_anim_time
+    g_state.last_anim_time = now
+
+    for i in range(8):
+        pwm = g_state.motor_pwm[i]
+        # RPM proportional to PWM above 1000us
+        throttle_pct = max(0.0, (pwm - 1000.0) / 1000.0)
+        if throttle_pct > 0.01:
+            spin_speed = (15.0 + throttle_pct * 60.0) * (1 if i % 2 == 0 else -1)
+            g_state.prop_angles[i] = (g_state.prop_angles[i] + spin_speed * dt) % (2.0 * math.pi)
+
+    # Airframe Arm Geometries (Normalized Coordinates in Craft Space)
+    # Motor positions: (X, Y, Z, CW/CCW direction, Name)
+    motor_defs = [
+        (+0.75, -0.75, 0.0, -1, "M1 (RR)"), # Motor 1: Rear Right (CCW)
+        (+0.75, +0.75, 0.0, +1, "M2 (FR)"), # Motor 2: Front Right (CW)
+        (-0.75, -0.75, 0.0, +1, "M3 (RL)"), # Motor 3: Rear Left (CW)
+        (-0.75, +0.75, 0.0, -1, "M4 (FL)"), # Motor 4: Front Left (CCW)
+    ]
+
+    # Render Center Fuselage Hub (Hexagon)
+    hub_pts_3d = [
+        (+0.25, +0.15, 0.0), (+0.25, -0.15, 0.0), (0.0, -0.25, 0.0),
+        (-0.25, -0.15, 0.0), (-0.25, +0.15, 0.0), (0.0, +0.25, 0.0)
+    ]
+    hub_pts_2d = [project_3d(hx, hy, hz, r_rad, p_rad, y_rad, center_x, center_y) for hx, hy, hz in hub_pts_3d]
+    col_hub = imgui.color_convert_float4_to_u32(imgui.ImVec4(0.18, 0.22, 0.28, 1.0))
+    col_hub_edge = imgui.color_convert_float4_to_u32(imgui.ImVec4(0.0, 0.8, 1.0, 1.0))
+
+    for i in range(len(hub_pts_2d)):
+        draw_list.add_line(hub_pts_2d[i], hub_pts_2d[(i + 1) % len(hub_pts_2d)], col_hub_edge, 2.0)
+
+    # Front Heading Arrow (Neon Cyan)
+    nose_pt = project_3d(0.0, +0.55, 0.0, r_rad, p_rad, y_rad, center_x, center_y)
+    front_l = project_3d(-0.15, +0.25, 0.0, r_rad, p_rad, y_rad, center_x, center_y)
+    front_r = project_3d(+0.15, +0.25, 0.0, r_rad, p_rad, y_rad, center_x, center_y)
+    col_arrow = imgui.color_convert_float4_to_u32(imgui.ImVec4(0.0, 1.0, 0.8, 0.9))
+    draw_list.add_triangle_filled(nose_pt, front_l, front_r, col_arrow)
+
+    # Render Carbon Fiber Arms and Motor Pods
+    col_arm = imgui.color_convert_float4_to_u32(imgui.ImVec4(0.35, 0.40, 0.48, 1.0))
+    hub_center_2d = project_3d(0, 0, 0, r_rad, p_rad, y_rad, center_x, center_y)
+
+    for idx, (mx, my, mz, spin_dir, m_name) in enumerate(motor_defs):
+        m_pos_2d = project_3d(mx, my, mz, r_rad, p_rad, y_rad, center_x, center_y)
+
+        # Draw Arm Tube
+        draw_list.add_line(hub_center_2d, m_pos_2d, col_arm, 4.0)
+
+        # Draw Motor Base Pod
+        pwm = g_state.motor_pwm[idx]
+        is_spinning = (pwm > 1020)
+        col_motor = imgui.color_convert_float4_to_u32(imgui.ImVec4(0.0, 0.9, 0.4, 1.0) if is_spinning else imgui.ImVec4(0.8, 0.3, 0.2, 1.0))
+        draw_list.add_circle_filled(m_pos_2d, 12.0, col_motor, 16)
+        draw_list.add_circle(m_pos_2d, 12.0, col_border, 16, 1.5)
+
+        # Draw Motor Number Text
+        col_text = imgui.color_convert_float4_to_u32(imgui.ImVec4(1.0, 1.0, 1.0, 1.0))
+        draw_list.add_text(imgui.ImVec2(m_pos_2d.x - 4, m_pos_2d.y - 6), col_text, f"{idx+1}")
+
+        # Render Animated Propeller Disc & Blades
+        prop_radius = 42.0
+        prop_angle = g_state.prop_angles[idx]
+
+        if is_spinning:
+            # Translucent blurred spinning disc
+            col_disc = imgui.color_convert_float4_to_u32(imgui.ImVec4(0.0, 0.8, 1.0, 0.25))
+            draw_list.add_circle_filled(m_pos_2d, prop_radius, col_disc, 24)
+            draw_list.add_circle(m_pos_2d, prop_radius, imgui.color_convert_float4_to_u32(imgui.ImVec4(0.0, 0.8, 1.0, 0.6)), 24, 1.5)
+
+        # Draw Propeller Blades (2-Blade Prop)
+        blade_col = imgui.color_convert_float4_to_u32(imgui.ImVec4(0.9, 0.9, 0.9, 0.85) if not is_spinning else imgui.ImVec4(0.0, 1.0, 0.8, 0.7))
+        b1_x = m_pos_2d.x + math.cos(prop_angle) * prop_radius
+        b1_y = m_pos_2d.y + math.sin(prop_angle) * prop_radius
+        b2_x = m_pos_2d.x - math.cos(prop_angle) * prop_radius
+        b2_y = m_pos_2d.y - math.sin(prop_angle) * prop_radius
+        draw_list.add_line(imgui.ImVec2(b1_x, b1_y), imgui.ImVec2(b2_x, b2_y), blade_col, 3.0)
+
+        # Draw Rotation Direction Arrow (CW / CCW)
+        dir_text = "CCW" if spin_dir < 0 else "CW"
+        dir_col = imgui.color_convert_float4_to_u32(imgui.ImVec4(0.3, 0.8, 1.0, 0.9) if spin_dir < 0 else imgui.ImVec4(1.0, 0.7, 0.2, 0.9))
+        draw_list.add_text(imgui.ImVec2(m_pos_2d.x - 12, m_pos_2d.y + 16), dir_col, dir_text)
+
+    # Top-Left Telemetry Overlay in Canvas
+    draw_list.add_text(imgui.ImVec2(origin_pos.x + 12, origin_pos.y + 12), col_text, f"ROLL:  {g_state.roll_deg:+5.1f} deg")
+    draw_list.add_text(imgui.ImVec2(origin_pos.x + 12, origin_pos.y + 28), col_text, f"PITCH: {g_state.pitch_deg:+5.1f} deg")
+    draw_list.add_text(imgui.ImVec2(origin_pos.x + 12, origin_pos.y + 44), col_text, f"YAW:   {g_state.yaw_deg:5.1f} deg")
+
+# ---------------------------------------------------------------------------
+# Primary Flight Display (PFD / Artificial Horizon HUD)
+# ---------------------------------------------------------------------------
+def render_pfd_hud(draw_list, origin_pos, size):
+    cx = origin_pos.x + size.x * 0.5
+    cy = origin_pos.y + size.y * 0.5
+    r = min(size.x, size.y) * 0.45
+
+    # Sky / Ground Circular Mask
+    col_sky = imgui.color_convert_float4_to_u32(imgui.ImVec4(0.08, 0.25, 0.45, 1.0))
+    col_ground = imgui.color_convert_float4_to_u32(imgui.ImVec4(0.35, 0.22, 0.12, 1.0))
+    col_border = imgui.color_convert_float4_to_u32(imgui.ImVec4(0.0, 0.85, 1.0, 1.0))
+
+    draw_list.add_circle_filled(imgui.ImVec2(cx, cy), r, col_ground, 32)
+
+    # Pitch offset
+    pitch_offset = g_state.pitch_deg * 2.0
+    roll_rad = math.radians(g_state.roll_deg)
+
+    # Horizon Line
+    hx1 = cx - math.cos(roll_rad) * r
+    hy1 = cy - math.sin(roll_rad) * r + pitch_offset
+    hx2 = cx + math.cos(roll_rad) * r
+    hy2 = cy + math.sin(roll_rad) * r + pitch_offset
+    col_horizon = imgui.color_convert_float4_to_u32(imgui.ImVec4(1.0, 1.0, 1.0, 0.9))
+    draw_list.add_line(imgui.ImVec2(hx1, hy1), imgui.ImVec2(hx2, hy2), col_horizon, 2.5)
+
+    # Outer Bezel Ring
+    draw_list.add_circle(imgui.ImVec2(cx, cy), r, col_border, 32, 2.0)
+
+    # Center Aircraft Reticle (Yellow Wings)
+    col_reticle = imgui.color_convert_float4_to_u32(imgui.ImVec4(1.0, 0.9, 0.0, 1.0))
+    draw_list.add_line(imgui.ImVec2(cx - 30, cy), imgui.ImVec2(cx - 10, cy), col_reticle, 3.0)
+    draw_list.add_line(imgui.ImVec2(cx + 10, cy), imgui.ImVec2(cx + 30, cy), col_reticle, 3.0)
+    draw_list.add_circle_filled(imgui.ImVec2(cx, cy), 3.0, col_reticle)
+
+# ---------------------------------------------------------------------------
+# Dual RC Stick Gimbal Renderer
+# ---------------------------------------------------------------------------
+def render_rc_gimbals(draw_list, pos, width=280, height=130):
+    g_radius = 48.0
+    g1_cx = pos.x + 65.0
+    g1_cy = pos.y + 65.0
+    g2_cx = pos.x + width - 65.0
+    g2_cy = pos.y + 65.0
+
+    col_g_bg = imgui.color_convert_float4_to_u32(imgui.ImVec4(0.08, 0.10, 0.14, 1.0))
+    col_g_border = imgui.color_convert_float4_to_u32(imgui.ImVec4(0.25, 0.35, 0.45, 1.0))
+    col_stick = imgui.color_convert_float4_to_u32(imgui.ImVec4(0.0, 0.9, 1.0, 1.0))
+
+    # Left Gimbal: Throttle (Y) + Yaw (X)
+    draw_list.add_circle_filled(imgui.ImVec2(g1_cx, g1_cy), g_radius, col_g_bg, 24)
+    draw_list.add_circle(imgui.ImVec2(g1_cx, g1_cy), g_radius, col_g_border, 24, 1.5)
+    draw_list.add_line(imgui.ImVec2(g1_cx - g_radius, g1_cy), imgui.ImVec2(g1_cx + g_radius, g1_cy), col_g_border, 1.0)
+    draw_list.add_line(imgui.ImVec2(g1_cx, g1_cy - g_radius), imgui.ImVec2(g1_cx, g1_cy + g_radius), col_g_border, 1.0)
+
+    # Stick position calculation (AETR: Ch3=Throttle, Ch4=Yaw)
+    yaw_val = (g_state.rc_channels[3] - 1500.0) / 500.0
+    thr_val = (g_state.rc_channels[2] - 1500.0) / 500.0
+    st1_x = g1_cx + yaw_val * (g_radius - 8.0)
+    st1_y = g1_cy - thr_val * (g_radius - 8.0)
+    draw_list.add_circle_filled(imgui.ImVec2(st1_x, st1_y), 8.0, col_stick, 16)
+
+    # Right Gimbal: Pitch (Y) + Roll (X)
+    draw_list.add_circle_filled(imgui.ImVec2(g2_cx, g2_cy), g_radius, col_g_bg, 24)
+    draw_list.add_circle(imgui.ImVec2(g2_cx, g2_cy), g_radius, col_g_border, 24, 1.5)
+    draw_list.add_line(imgui.ImVec2(g2_cx - g_radius, g2_cy), imgui.ImVec2(g2_cx + g_radius, g2_cy), col_g_border, 1.0)
+    draw_list.add_line(imgui.ImVec2(g2_cx, g2_cy - g_radius), imgui.ImVec2(g2_cx, g2_cy + g_radius), col_g_border, 1.0)
+
+    roll_val = (g_state.rc_channels[0] - 1500.0) / 500.0
+    pitch_val = (g_state.rc_channels[1] - 1500.0) / 500.0
+    st2_x = g2_cx + roll_val * (g_radius - 8.0)
+    st2_y = g2_cy - pitch_val * (g_radius - 8.0)
+    draw_list.add_circle_filled(imgui.ImVec2(st2_x, st2_y), 8.0, col_stick, 16)
+
+# ---------------------------------------------------------------------------
+# Main GUI Dispatcher
+# ---------------------------------------------------------------------------
 def gui_render():
-    imgui.set_next_window_size(imgui.ImVec2(1120, 820), imgui.Cond_.first_use_ever)
-    imgui.begin("INAV-ABSTRACTX Flight Controller Master QA & Guided Commissioning Suite")
+    imgui.set_next_window_size(imgui.ImVec2(1200, 860), imgui.Cond_.first_use_ever)
+    imgui.begin("INAV-ABSTRACTX Master Flight Deck & Commissioning Studio")
 
-    # Header Connection Bar
+    # Header Connection & Status Ribbon
     imgui.text("Target:")
     imgui.same_line()
-    imgui.set_next_item_width(220)
+    imgui.set_next_item_width(200)
     changed, g_state.target_address = imgui.input_text("##target", g_state.target_address)
     imgui.same_line()
 
     if not g_state.is_connected:
-        if imgui.button("Connect"):
+        if imgui.button("Connect", imgui.ImVec2(90, 24)):
             g_state.connect()
     else:
-        if imgui.button("Disconnect"):
+        if imgui.button("Disconnect", imgui.ImVec2(90, 24)):
             g_state.disconnect()
 
     imgui.same_line()
-    status_color = imgui.ImVec4(0.2, 0.9, 0.2, 1.0) if g_state.is_connected else imgui.ImVec4(0.9, 0.2, 0.2, 1.0)
+    status_color = imgui.ImVec4(0.2, 0.9, 0.3, 1.0) if g_state.is_connected else imgui.ImVec4(0.9, 0.2, 0.2, 1.0)
     imgui.text_colored(status_color, f"● {g_state.connection_status}")
     imgui.same_line()
-    imgui.text(f"| Loop: {g_state.cycle_time_us} us | Sensors: 0x{g_state.sensor_flags:02X}")
+    imgui.text(f"| Loop: {g_state.cycle_time_us} us | Sensors: 0x{g_state.sensor_flags:02X} | Arming: 0x{g_state.arming_flags:04X}")
 
     imgui.separator()
 
-    # Tab Bar
-    if imgui.begin_tab_bar("DashboardTabs"):
+    # Tab Navigation
+    if imgui.begin_tab_bar("StudioTabs"):
 
         # =============================================================
-        # TAB 1: GUIDED CRAFT COMMISSIONING & SETUP WIZARD (FIRST-PRINCIPLES)
+        # TAB 1: VISUAL 3D FLIGHT DECK (ANIMATED DRONE & PFD HUD)
+        # =============================================================
+        if imgui.begin_tab_item("3D Live Flight Deck")[0]:
+            imgui.columns(2, "deck_cols", True)
+
+            # Left Column: 3D Vector Drone Canvas
+            imgui.text_colored(imgui.ImVec4(0.0, 0.85, 1.0, 1.0), "Interactive 3D Craft Viewport (Real-Time Physics & Spinning Props):")
+            
+            canvas_pos = imgui.get_cursor_screen_pos()
+            canvas_size = imgui.ImVec2(550, 420)
+            draw_list = imgui.get_window_draw_list()
+            render_3d_craft_canvas(draw_list, canvas_pos, canvas_size)
+            imgui.dummy(canvas_size)
+
+            imgui.separator()
+            imgui.text_colored(imgui.ImVec4(0.0, 0.85, 1.0, 1.0), "Dual RC Transmitter Gimbals:")
+            gimbal_pos = imgui.get_cursor_screen_pos()
+            render_rc_gimbals(draw_list, gimbal_pos, 550, 130)
+            imgui.dummy(imgui.ImVec2(550, 130))
+
+            imgui.next_column()
+
+            # Right Column: PFD Artificial Horizon & Motor Status
+            imgui.text_colored(imgui.ImVec4(0.0, 0.85, 1.0, 1.0), "EFIS Primary Flight Display (PFD) Artificial Horizon:")
+            hud_pos = imgui.get_cursor_screen_pos()
+            hud_size = imgui.ImVec2(240, 200)
+            render_pfd_hud(draw_list, hud_pos, hud_size)
+            imgui.dummy(hud_size)
+
+            imgui.separator()
+            imgui.text_colored(imgui.ImVec4(0.0, 0.85, 1.0, 1.0), "Live Motor Output Power (DShot600):")
+            for i in range(4):
+                pwm = g_state.motor_pwm[i]
+                norm = (pwm - 1000.0) / 1000.0
+                m_names = ["M1 (Rear-R CCW)", "M2 (Front-R CW)", "M3 (Rear-L CW)", "M4 (Front-L CCW)"]
+                imgui.text(f"{m_names[i]:18s}: {pwm:4d} us")
+                imgui.same_line()
+                imgui.progress_bar(norm, imgui.ImVec2(220, 0), f"{norm*100:.0f}%")
+
+            imgui.separator()
+            imgui.text(f"Altitude: {g_state.alt_m:6.2f} m | Vario: {g_state.vario_cms:3d} cm/s | Satellites: {g_state.gps_sats}")
+
+            imgui.columns(1)
+            imgui.end_tab_item()
+
+        # =============================================================
+        # TAB 2: GUIDED CRAFT SETUP & COMMISSIONING WIZARD
         # =============================================================
         if imgui.begin_tab_item("Guided Craft Setup Wizard")[0]:
             imgui.text_colored(imgui.ImVec4(1.0, 0.85, 0.2, 1.0), "STEP-BY-STEP AIRFRAME & HARDWARE COMMISSIONING WIZARD")
-            imgui.text("Follow the numbered workflow to configure mixer geometry, radio link, hardware LEDs, buzzer, and motor directions.")
             imgui.separator()
 
-            # Wizard Stage Indicator
             stages = ["1. Airframe", "2. Radio & RC", "3. LED/Buzzer", "4. Motor Spin", "5. Arm Switch", "6. Flash Save"]
             for idx, st_name in enumerate(stages):
                 is_active = (g_state.wizard_step == (idx + 1))
-                color = imgui.ImVec4(0.2, 0.9, 0.2, 1.0) if is_active else imgui.ImVec4(0.6, 0.6, 0.6, 1.0)
+                color = imgui.ImVec4(0.2, 0.9, 0.3, 1.0) if is_active else imgui.ImVec4(0.5, 0.5, 0.5, 1.0)
                 imgui.text_colored(color, f"[{st_name}]")
                 if idx < len(stages) - 1:
                     imgui.same_line()
@@ -306,205 +576,82 @@ def gui_render():
 
             imgui.separator()
 
-            # --- STEP 1: Airframe & Motor Geometry Selection ---
             if g_state.wizard_step == 1:
                 imgui.text_colored(imgui.ImVec4(0.4, 0.8, 1.0, 1.0), "Stage 1: Select Airframe Geometry & Motor Mixer")
-                airframes = ["Quadcopter X (4 Motors - Standard)", "Octocopter X8 Coaxial (8 Motors - Heavy Lift)", "Flat Octocopter (8 Motors - 8 Arms)", "Hexacopter 6X (6 Motors)", "Flying Wing / Fixed-Wing (2 Elevons + 1 Motor)"]
+                airframes = ["Quadcopter X (4 Motors)", "Octocopter X8 Coaxial (8 Motors)", "Flat Octocopter (8 Motors)", "Hexacopter 6X (6 Motors)", "Flying Wing / Fixed-Wing"]
                 changed, g_state.airframe_type_idx = imgui.combo("Airframe Layout", g_state.airframe_type_idx, airframes)
                 
-                imgui.separator()
-                if g_state.airframe_type_idx == 0:
-                    imgui.text("Selected: QUADCOPTER X (4 Motors)")
-                    imgui.text("  • Motor 1: Rear Right (CCW)")
-                    imgui.text("  • Motor 2: Front Right (CW)")
-                    imgui.text("  • Motor 3: Rear Left (CW)")
-                    imgui.text("  • Motor 4: Front Left (CCW)")
-                elif g_state.airframe_type_idx in (1, 2):
-                    imgui.text("Selected: OCTOCOPTER 8-MOTOR PLATFORM")
-                    imgui.text("  • Motors 1-4: Top Layer / Front Arms")
-                    imgui.text("  • Motors 5-8: Bottom Layer (Coaxial Counter-Rotating) / Rear Arms")
-                elif g_state.airframe_type_idx == 3:
-                    imgui.text("Selected: HEXACOPTER 6X (6 Motors)")
-                else:
-                    imgui.text("Selected: FLYING WING (Elevon Servo 1, Elevon Servo 2, Motor 1)")
-
-                imgui.separator()
                 if imgui.button("Next: Radio & RC Protocol ->", imgui.ImVec2(240, 35)):
                     g_state.wizard_step = 2
 
-            # --- STEP 2: Radio Link & RC Channel Mapping ---
             elif g_state.wizard_step == 2:
                 imgui.text_colored(imgui.ImVec4(0.4, 0.8, 1.0, 1.0), "Stage 2: Configure Radio Protocol & Stick Mapping")
-                rx_protocols = ["ExpressLRS / TBS Crossfire (CRSF Serial)", "SBUS (Inverted Serial 100k)", "Spektrum SRXL2 (Half-Duplex 115k)", "FlySky IBUS (Serial 115k)"]
+                rx_protocols = ["ExpressLRS / TBS Crossfire (CRSF Serial)", "SBUS (Inverted 100k)", "Spektrum SRXL2", "IBUS"]
                 changed, g_state.rx_protocol_idx = imgui.combo("Receiver Protocol", g_state.rx_protocol_idx, rx_protocols)
 
-                channel_maps = ["AETR1234 (Default: Roll, Pitch, Throttle, Yaw)", "TAER1234 (Spektrum: Throttle, Roll, Pitch, Yaw)"]
+                channel_maps = ["AETR1234 (Roll, Pitch, Throttle, Yaw)", "TAER1234 (Throttle, Roll, Pitch, Yaw)"]
                 changed, g_state.channel_map_idx = imgui.combo("Channel Order", g_state.channel_map_idx, channel_maps)
 
-                imgui.separator()
-                imgui.text("Live Transmitter Stick Verification (Move sticks to verify):")
-                imgui.text(f"  Roll:     {g_state.rc_channels[0]:4d} us")
-                imgui.text(f"  Pitch:    {g_state.rc_channels[1]:4d} us")
-                imgui.text(f"  Throttle: {g_state.rc_channels[2]:4d} us (Should read ~1000us at low stick)")
-                imgui.text(f"  Yaw:      {g_state.rc_channels[3]:4d} us")
-
-                imgui.separator()
-                if imgui.button("<- Back", imgui.ImVec2(100, 35)):
-                    g_state.wizard_step = 1
+                if imgui.button("<- Back", imgui.ImVec2(100, 35)): g_state.wizard_step = 1
                 imgui.same_line()
-                if imgui.button("Next: Hardware LED & Buzzer Test ->", imgui.ImVec2(280, 35)):
-                    g_state.wizard_step = 3
+                if imgui.button("Next: Hardware LED & Buzzer Test ->", imgui.ImVec2(280, 35)): g_state.wizard_step = 3
 
-            # --- STEP 3: Hardware LED & Buzzer Test ---
             elif g_state.wizard_step == 3:
-                imgui.text_colored(imgui.ImVec4(0.4, 0.8, 1.0, 1.0), "Stage 3: Physical Hardware LED & Buzzer Diagnostic Check")
-                imgui.text("Test the onboard status LED and lost-model buzzer before motor testing.")
-                imgui.separator()
-
-                # Status LED Test Button
-                if imgui.button("Toggle Status LED (Blink / Solid)", imgui.ImVec2(280, 35)):
+                imgui.text_colored(imgui.ImVec4(0.4, 0.8, 1.0, 1.0), "Stage 3: Physical Hardware LED & Buzzer Check")
+                if imgui.button("Toggle Status LED", imgui.ImVec2(220, 35)):
                     g_state.led_state = not g_state.led_state
-                    g_state.status_msg = f"Status LED toggled to {'ON' if g_state.led_state else 'OFF'}"
-
                 imgui.same_line()
-                led_color = imgui.ImVec4(0.2, 0.9, 0.2, 1.0) if g_state.led_state else imgui.ImVec4(0.4, 0.4, 0.4, 1.0)
-                imgui.text_colored(led_color, f"● LED State: {'ACTIVE' if g_state.led_state else 'OFF'}")
-
-                # Buzzer Beep Test Button
-                if imgui.button("Trigger Buzzer Pattern (3-Beep Test)", imgui.ImVec2(280, 35)):
+                if imgui.button("Beep Buzzer (3-Beep Test)", imgui.ImVec2(220, 35)):
                     g_state.buzzer_state = True
-                    g_state.status_msg = "Triggered Buzzer 3-beep test pattern."
-
-                imgui.same_line()
-                imgui.text("● Buzzer Ready")
 
                 imgui.separator()
-                if imgui.button("<- Back", imgui.ImVec2(100, 35)):
-                    g_state.wizard_step = 2
+                if imgui.button("<- Back", imgui.ImVec2(100, 35)): g_state.wizard_step = 2
                 imgui.same_line()
-                if imgui.button("Next: Motor Direction & Spin Test ->", imgui.ImVec2(280, 35)):
-                    g_state.wizard_step = 4
+                if imgui.button("Next: Motor Direction & Spin Test ->", imgui.ImVec2(280, 35)): g_state.wizard_step = 4
 
-            # --- STEP 4: Motor Direction & Spin Test (4 or 8 Motors) ---
             elif g_state.wizard_step == 4:
                 imgui.text_colored(imgui.ImVec4(1.0, 0.3, 0.3, 1.0), "Stage 4: Motor Spin Direction & ESC Sequencer")
-                imgui.text("CRITICAL: ALL PROPELLERS MUST BE COMPLETELY REMOVED FROM MOTORS!")
+                imgui.text("CRITICAL: ALL PROPELLERS MUST BE COMPLETELY REMOVED!")
                 _, g_state.props_removed_confirmed = imgui.checkbox("I CONFIRM ALL PROPELLERS ARE REMOVED", g_state.props_removed_confirmed)
-                imgui.separator()
-
+                
                 if g_state.props_removed_confirmed:
                     num_motors = 8 if g_state.airframe_type_idx in (1, 2) else (6 if g_state.airframe_type_idx == 3 else 4)
                     imgui.columns(2, "wiz_motors", True)
-
                     for m_i in range(num_motors):
-                        m_num = m_i + 1
-                        if m_i == 4:
-                            imgui.next_column()
-                        imgui.text(f"Motor {m_num} (Channel {m_num})")
-                        if imgui.button(f"Spin Motor {m_num} (1060 us)##wiz_m{m_num}"):
+                        if m_i == 4: imgui.next_column()
+                        if imgui.button(f"Spin Motor {m_i+1} (1060 us)##wizm{m_i+1}"):
                             g_state.spin_motor(m_i, 1060)
-                        imgui.same_line()
-                        imgui.text("Idle Spin")
-
                     imgui.columns(1)
                     imgui.separator()
-                    if imgui.button("STOP ALL MOTORS", imgui.ImVec2(200, 35)):
-                        g_state.stop_all_motors()
-                else:
-                    imgui.text_colored(imgui.ImVec4(0.8, 0.8, 0.8, 1.0), "Acknowledge the propeller safety checkbox above to unlock motor buttons.")
+                    if imgui.button("STOP ALL MOTORS", imgui.ImVec2(200, 35)): g_state.stop_all_motors()
 
                 imgui.separator()
-                if imgui.button("<- Back", imgui.ImVec2(100, 35)):
-                    g_state.wizard_step = 3
+                if imgui.button("<- Back", imgui.ImVec2(100, 35)): g_state.wizard_step = 3
                 imgui.same_line()
-                if imgui.button("Next: Arming Switch Configuration ->", imgui.ImVec2(280, 35)):
-                    g_state.wizard_step = 5
+                if imgui.button("Next: Arming Switch ->", imgui.ImVec2(220, 35)): g_state.wizard_step = 5
 
-            # --- STEP 5: Arming Switch Configuration ---
             elif g_state.wizard_step == 5:
-                imgui.text_colored(imgui.ImVec4(0.4, 0.8, 1.0, 1.0), "Stage 5: Arming Switch & Safety Interlocks")
+                imgui.text_colored(imgui.ImVec4(0.4, 0.8, 1.0, 1.0), "Stage 5: Arming Switch Configuration")
                 arm_switches = ["AUX 1 (Channel 5)", "AUX 2 (Channel 6)", "AUX 3 (Channel 7)", "AUX 4 (Channel 8)"]
                 changed, g_state.arm_switch_idx = imgui.combo("Arming Channel", g_state.arm_switch_idx, arm_switches)
 
-                arm_val = g_state.rc_channels[4 + g_state.arm_switch_idx]
-                is_armed_rc = (arm_val > 1700)
-                arm_color = imgui.ImVec4(0.2, 0.9, 0.2, 1.0) if is_armed_rc else imgui.ImVec4(0.8, 0.8, 0.8, 1.0)
-                imgui.text(f"Selected Switch Value: {arm_val} us")
-                imgui.text_colored(arm_color, f"Arm Switch Status: {'ARMED (High)' if is_armed_rc else 'DISARMED (Low)'}")
-
-                imgui.separator()
-                if imgui.button("<- Back", imgui.ImVec2(100, 35)):
-                    g_state.wizard_step = 4
+                if imgui.button("<- Back", imgui.ImVec2(100, 35)): g_state.wizard_step = 4
                 imgui.same_line()
-                if imgui.button("Next: Save & Complete Commissioning ->", imgui.ImVec2(300, 35)):
-                    g_state.wizard_step = 6
+                if imgui.button("Next: Save & Complete Commissioning ->", imgui.ImVec2(300, 35)): g_state.wizard_step = 6
 
-            # --- STEP 6: Flash Save & Summary ---
             elif g_state.wizard_step == 6:
-                imgui.text_colored(imgui.ImVec4(0.2, 0.9, 0.2, 1.0), "Stage 6: Commissioning Complete - Save Configuration")
-                imgui.text("All 6 setup stages have been validated:")
-                imgui.text("  [OK] Airframe Mixer: Configured")
-                imgui.text("  [OK] Radio Protocol & Channels: Verified")
-                imgui.text("  [OK] Status LED & Buzzer: Tested")
-                imgui.text("  [OK] Motor Spin Sequencer: Verified")
-                imgui.text("  [OK] Arming Switch: Assigned")
-
-                imgui.separator()
-                if imgui.button("Commit All Settings to Flash Memory (0x1F0000)", imgui.ImVec2(380, 45)):
+                imgui.text_colored(imgui.ImVec4(0.2, 0.9, 0.3, 1.0), "Stage 6: Save Configuration to Flash")
+                if imgui.button("Commit All Settings to Flash (0x1F0000)", imgui.ImVec2(380, 45)):
                     g_state.send_msp(MSP_EEPROM_WRITE)
                     g_state.status_msg = "Configuration permanently saved to Flash memory sector 0x1F0000!"
 
-                imgui.separator()
-                if imgui.button("<- Back to Wizard Steps", imgui.ImVec2(200, 35)):
-                    g_state.wizard_step = 1
-
             imgui.end_tab_item()
 
         # =============================================================
-        # TAB 2: 3D Attitude & Sensors
-        # =============================================================
-        if imgui.begin_tab_item("3D Attitude & IMU")[0]:
-            imgui.columns(2, "attitude_cols", True)
-
-            imgui.text_colored(imgui.ImVec4(0.4, 0.8, 1.0, 1.0), "AHRS Attitude Estimation (Mahony Filter):")
-            imgui.text(f"Roll:  {g_state.roll_deg:+6.1f}°")
-            imgui.progress_bar((g_state.roll_deg + 45.0) / 90.0, imgui.ImVec2(-1, 0), f"{g_state.roll_deg:+.1f}°")
-            
-            imgui.text(f"Pitch: {g_state.pitch_deg:+6.1f}°")
-            imgui.progress_bar((g_state.pitch_deg + 45.0) / 90.0, imgui.ImVec2(-1, 0), f"{g_state.pitch_deg:+.1f}°")
-            
-            imgui.text(f"Yaw:   {g_state.yaw_deg:5.1f}°")
-            imgui.progress_bar((g_state.yaw_deg % 360.0) / 360.0, imgui.ImVec2(-1, 0), f"{g_state.yaw_deg:.1f}°")
-
-            imgui.separator()
-            imgui.text_colored(imgui.ImVec4(0.4, 0.8, 1.0, 1.0), "Barometer & Variometer:")
-            imgui.text(f"Altitude:  {g_state.alt_m:6.2f} m")
-            imgui.text(f"Vario:     {g_state.vario_cms:6d} cm/s")
-
-            imgui.next_column()
-
-            imgui.text_colored(imgui.ImVec4(0.4, 0.8, 1.0, 1.0), "Raw IMU Accelerometer (G-force):")
-            imgui.text(f"Acc X: {g_state.accel_g[0]:+5.2f} G")
-            imgui.text(f"Acc Y: {g_state.accel_g[1]:+5.2f} G")
-            imgui.text(f"Acc Z: {g_state.accel_g[2]:+5.2f} G (Target: ~1.00G level)")
-
-            imgui.separator()
-            imgui.text_colored(imgui.ImVec4(0.4, 0.8, 1.0, 1.0), "Raw IMU Gyroscope (Angular Rate):")
-            imgui.text(f"Gyro X: {g_state.gyro_dps[0]:+6.1f} °/s")
-            imgui.text(f"Gyro Y: {g_state.gyro_dps[1]:+6.1f} °/s")
-            imgui.text(f"Gyro Z: {g_state.gyro_dps[2]:+6.1f} °/s")
-
-            imgui.columns(1)
-            imgui.end_tab_item()
-
-        # =============================================================
-        # TAB 3: Magnetometer / Compass Calibration Suite
+        # TAB 3: MAGNETOMETER / COMPASS CALIBRATION
         # =============================================================
         if imgui.begin_tab_item("Compass Calibration (3D Scatter)")[0]:
             imgui.text_colored(imgui.ImVec4(1.0, 0.8, 0.2, 1.0), "3D Magnetometer / Compass Ellipsoid Calibration Suite")
-            imgui.text_wrapped("Rotate the drone 360 degrees around all axes to map the magnetic field sphere and remove hard/soft iron distortions.")
-            imgui.separator()
-
             imgui.columns(2, "mag_cols", True)
 
             if not g_state.mag_cal_active:
@@ -513,7 +660,7 @@ def gui_render():
             else:
                 elapsed = time.time() - g_state.mag_cal_start_time
                 remaining = max(0.0, g_state.mag_cal_duration - elapsed)
-                imgui.text_colored(imgui.ImVec4(0.2, 0.9, 0.2, 1.0), f"CALIBRATION IN PROGRESS: {remaining:4.1f}s")
+                imgui.text_colored(imgui.ImVec4(0.2, 0.9, 0.3, 1.0), f"CALIBRATION ACTIVE: {remaining:4.1f}s")
                 imgui.progress_bar(elapsed / g_state.mag_cal_duration, imgui.ImVec2(280, 0))
 
                 if remaining <= 0.0:
@@ -526,30 +673,19 @@ def gui_render():
                         dx = max(1.0, (g_state.mag_max[0] - g_state.mag_min[0]) / 2.0)
                         dy = max(1.0, (g_state.mag_max[1] - g_state.mag_min[1]) / 2.0)
                         dz = max(1.0, (g_state.mag_max[2] - g_state.mag_min[2]) / 2.0)
-                        avg_delta = (dx + dy + dz) / 3.0
-                        g_state.mag_scale = [avg_delta / dx, avg_delta / dy, avg_delta / dz]
+                        avg_d = (dx + dy + dz) / 3.0
+                        g_state.mag_scale = [avg_d / dx, avg_d / dy, avg_d / dz]
                         g_state.status_msg = f"Compass Calibration Succeeded! Offsets: [{bx:.0f}, {by:.0f}, {bz:.0f}]"
 
-            imgui.separator()
-            imgui.text("Calculated Hard-Iron Zero Offsets (Bias):")
-            imgui.text(f"  Offset X: {g_state.mag_offset[0]:+6.1f} LSB")
-            imgui.text(f"  Offset Y: {g_state.mag_offset[1]:+6.1f} LSB")
-            imgui.text(f"  Offset Z: {g_state.mag_offset[2]:+6.1f} LSB")
+            imgui.text(f"Offset X: {g_state.mag_offset[0]:+6.1f} | Scale X: {g_state.mag_scale[0]:5.3f}")
+            imgui.text(f"Offset Y: {g_state.mag_offset[1]:+6.1f} | Scale Y: {g_state.mag_scale[1]:5.3f}")
+            imgui.text(f"Offset Z: {g_state.mag_offset[2]:+6.1f} | Scale Z: {g_state.mag_scale[2]:5.3f}")
 
-            imgui.separator()
-            imgui.text("Calculated Soft-Iron Scale Factors:")
-            imgui.text(f"  Scale X:  {g_state.mag_scale[0]:6.3f}x")
-            imgui.text(f"  Scale Y:  {g_state.mag_scale[1]:6.3f}x")
-            imgui.text(f"  Scale Z:  {g_state.mag_scale[2]:6.3f}x")
-
-            imgui.separator()
-            if imgui.button("Save Compass Offsets to Flash", imgui.ImVec2(280, 30)):
+            if imgui.button("Save Offsets to Flash", imgui.ImVec2(280, 30)):
                 g_state.send_msp(MSP_EEPROM_WRITE)
-                g_state.status_msg = "Compass calibration permanently written to Flash (0x1F0000)!"
 
             imgui.next_column()
 
-            imgui.text_colored(imgui.ImVec4(0.4, 0.8, 1.0, 1.0), "Live Magnetic Field Scatter Plot (X vs Y):")
             if implot.begin_plot("Mag Field (X vs Y)", imgui.ImVec2(-1, 280)):
                 implot.setup_axes("Mag X (LSB)", "Mag Y (LSB)")
                 if len(g_state.mag_samples_x) > 0:
@@ -562,65 +698,22 @@ def gui_render():
             imgui.end_tab_item()
 
         # =============================================================
-        # TAB 4: 6-Point Accelerometer Calibration Wizard
+        # TAB 4: 6-POINT ACCELEROMETER CALIBRATION
         # =============================================================
         if imgui.begin_tab_item("6-Point Acc Calibration")[0]:
-            imgui.text_colored(imgui.ImVec4(1.0, 0.8, 0.2, 1.0), "INAV / Betaflight 6-Point Accelerometer Calibration Standard")
-            imgui.text_wrapped("Calibrates all 6 orthogonal orientations to solve the 3x3 scaling matrix and eliminate gravity cross-bleed.")
-            imgui.separator()
-
+            imgui.text_colored(imgui.ImVec4(1.0, 0.8, 0.2, 1.0), "INAV / Betaflight 6-Point Accelerometer Standard")
             for idx, (step_name, expected, done) in enumerate(g_state.acc_6point_steps):
                 status_icon = "[DONE]" if done else "[PENDING]"
-                color = imgui.ImVec4(0.2, 0.9, 0.2, 1.0) if done else imgui.ImVec4(0.8, 0.8, 0.8, 1.0)
+                color = imgui.ImVec4(0.2, 0.9, 0.3, 1.0) if done else imgui.ImVec4(0.7, 0.7, 0.7, 1.0)
                 imgui.text_colored(color, f"{status_icon} {step_name} (Target: {expected})")
                 imgui.same_line(500)
-                if imgui.button(f"Capture Position {idx+1}##btn{idx}"):
+                if imgui.button(f"Capture Position {idx+1}##accp{idx}"):
                     g_state.send_msp(MSP_ACC_CALIBRATION)
                     g_state.acc_6point_steps[idx] = (step_name, expected, True)
-                    g_state.status_msg = f"Captured position {idx+1} successfully!"
 
             imgui.separator()
             if imgui.button("Apply & Save All 6 Positions to Flash", imgui.ImVec2(320, 35)):
                 g_state.send_msp(MSP_EEPROM_WRITE)
-                g_state.status_msg = "6-Point Accelerometer Calibration saved to Flash (0x1F0000)!"
-
-            imgui.end_tab_item()
-
-        # =============================================================
-        # TAB 5: RC Sticks & Transmitter
-        # =============================================================
-        if imgui.begin_tab_item("RC Sticks & Receiver")[0]:
-            imgui.text_colored(imgui.ImVec4(0.4, 0.8, 1.0, 1.0), "Live RC Receiver Channels (ExpressLRS / CRSF / SBUS):")
-            imgui.separator()
-
-            ch_names = ["Roll", "Pitch", "Throttle", "Yaw", "AUX 1 (ARM)", "AUX 2 (Mode)", "AUX 3 (RTH)", "AUX 4"]
-            for i in range(min(8, len(g_state.rc_channels))):
-                val = g_state.rc_channels[i]
-                norm = (val - 1000.0) / 1000.0
-                name = ch_names[i] if i < len(ch_names) else f"CH {i+1}"
-                imgui.text(f"{name:15s}: {val:4d} us")
-                imgui.same_line()
-                imgui.progress_bar(norm, imgui.ImVec2(300, 0), f"{val} us")
-
-            imgui.end_tab_item()
-
-        # =============================================================
-        # TAB 6: GPS & Navigation
-        # =============================================================
-        if imgui.begin_tab_item("GPS & Navigation")[0]:
-            imgui.text_colored(imgui.ImVec4(0.4, 0.8, 1.0, 1.0), "Ublox GPS Constellation & Navigation Status:")
-            imgui.separator()
-
-            fix_name = "3D FIX" if g_state.gps_fix >= 1 else "NO FIX"
-            fix_color = imgui.ImVec4(0.2, 0.9, 0.2, 1.0) if g_state.gps_fix >= 1 else imgui.ImVec4(0.9, 0.2, 0.2, 1.0)
-            imgui.text("GPS Status:  ")
-            imgui.same_line()
-            imgui.text_colored(fix_color, fix_name)
-
-            imgui.text(f"Satellites:  {g_state.gps_sats:2d}")
-            imgui.text(f"HDOP:        {g_state.gps_hdop:4.2f} (Target: < 1.50)")
-            imgui.text(f"Latitude:    {g_state.gps_lat:.6f}°")
-            imgui.text(f"Longitude:   {g_state.gps_lon:.6f}°")
 
             imgui.end_tab_item()
 
@@ -635,8 +728,8 @@ def main():
     t.start()
 
     params = hello_imgui.RunnerParams()
-    params.app_window_params.window_title = "inav-abstractx Desktop QA & Guided Setup Dashboard"
-    params.app_window_params.window_geometry.size = (1150, 850)
+    params.app_window_params.window_title = "inav-abstractx High-Fidelity Desktop Flight Studio"
+    params.app_window_params.window_geometry.size = (1250, 900)
     params.callbacks.show_gui = gui_render
 
     implot.create_context()
