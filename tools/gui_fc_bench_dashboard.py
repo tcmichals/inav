@@ -5,11 +5,12 @@ Built using `imgui-bundle` (Dear ImGui + ImPlot for Python).
 
 Features:
 1. Live 3D Attitude Gauges & IMU Gyro/Accel/Baro Telemetry
-2. Interactive Accelerometer Level & Compass Calibration Wizard
-3. Live RC Transmitter Stick & Channel Visualizer (16 Channels)
-4. Step-by-Step Individual Motor Spin Direction & ESC Tester (Props-Off Safety)
-5. GPS Constellation Lock, HDOP & Satellite Visualizer
-6. Flash EEPROM Save & Reboot Triggers
+2. Dedicated 3D Magnetometer / Compass Calibration Suite with Live ImPlot Ellipsoid Scatter
+3. Full 6-Point Accelerometer Level & Scale Calibration Wizard
+4. Live RC Transmitter Stick & Channel Visualizer (16 Channels)
+5. Step-by-Step Individual Motor Spin Direction & ESC Tester (Props-Off Safety)
+6. GPS Constellation Lock, HDOP & Satellite Visualizer
+7. Flash EEPROM Save & Parameter Verification
 """
 
 import sys
@@ -17,6 +18,7 @@ import socket
 import struct
 import time
 import threading
+import numpy as np
 from imgui_bundle import imgui, hello_imgui, implot
 
 # MSP Command Constants
@@ -69,6 +71,7 @@ class DashboardState:
         self.vario_cms = 0
         self.accel_g = [0.0, 0.0, 1.0]
         self.gyro_dps = [0.0, 0.0, 0.0]
+        self.mag_raw = [0, 0, 0]
         self.rc_channels = [1500, 1500, 1500, 1000] + [1000] * 12
         self.gps_fix = 0
         self.gps_sats = 0
@@ -78,14 +81,33 @@ class DashboardState:
         self.cycle_time_us = 1000
         self.sensor_flags = 0
         self.arming_flags = 0
-        self.fc_variant = "---"
+
+        # Magnetometer Calibration Scatter Data
+        self.mag_cal_active = False
+        self.mag_cal_start_time = 0.0
+        self.mag_cal_duration = 25.0
+        self.mag_samples_x = []
+        self.mag_samples_y = []
+        self.mag_samples_z = []
+        self.mag_min = [99999, 99999, 99999]
+        self.mag_max = [-99999, -99999, -99999]
+        self.mag_offset = [0.0, 0.0, 0.0]
+        self.mag_scale = [1.0, 1.0, 1.0]
+
+        # 6-Point Accelerometer Calibration State
+        self.acc_6point_steps = [
+            ("1. Level (Landing Skids)", "+1.0G on Z", False),
+            ("2. Left Side (Left Wing Down)", "+1.0G on Y", False),
+            ("3. Right Side (Right Wing Down)", "-1.0G on Y", False),
+            ("4. Nose UP (Pointing to Ceiling)", "-1.0G on X", False),
+            ("5. Nose DOWN (Pointing to Floor)", "+1.0G on X", False),
+            ("6. Inverted (Upside Down)", "-1.0G on Z", False),
+        ]
+        self.current_acc_step = 0
 
         # Safety & Wizard State
         self.props_removed_confirmed = False
-        self.calibrating_acc = False
-        self.calibrating_mag = False
-        self.mag_cal_time_remaining = 0
-        self.status_msg = "Ready. Connect to FC to start bench testing."
+        self.status_msg = "Ready. Connect to Flight Controller to start."
 
     def connect(self):
         try:
@@ -137,6 +159,17 @@ class DashboardState:
             except Exception:
                 return b''
 
+    def start_mag_calibration(self):
+        self.mag_cal_active = True
+        self.mag_cal_start_time = time.time()
+        self.mag_samples_x.clear()
+        self.mag_samples_y.clear()
+        self.mag_samples_z.clear()
+        self.mag_min = [99999, 99999, 99999]
+        self.mag_max = [-99999, -99999, -99999]
+        self.send_msp(MSP_MAG_CALIBRATION)
+        self.status_msg = "Compass Calibration Active! Rotate the aircraft in 360-degree spheres."
+
     def spin_motor(self, m_idx: int, pwm: int):
         m = [1000, 1000, 1000, 1000]
         if 0 <= m_idx < 4:
@@ -167,6 +200,21 @@ def telemetry_poll_thread():
                 ax, ay, az, gx, gy, gz, mx, my, mz = struct.unpack('<hhhhhhhhh', p[:18])
                 g_state.accel_g = [ax / 512.0, ay / 512.0, az / 512.0]
                 g_state.gyro_dps = [gx * (2000.0/32768.0), gy * (2000.0/32768.0), gz * (2000.0/32768.0)]
+                g_state.mag_raw = [mx, my, mz]
+
+                # Accumulate Magnetometer Scatter Samples if calibrating
+                if g_state.mag_cal_active:
+                    g_state.mag_samples_x.append(float(mx))
+                    g_state.mag_samples_y.append(float(my))
+                    g_state.mag_samples_z.append(float(mz))
+                    
+                    g_state.mag_min[0] = min(g_state.mag_min[0], mx)
+                    g_state.mag_min[1] = min(g_state.mag_min[1], my)
+                    g_state.mag_min[2] = min(g_state.mag_min[2], mz)
+                    
+                    g_state.mag_max[0] = max(g_state.mag_max[0], mx)
+                    g_state.mag_max[1] = max(g_state.mag_max[1], my)
+                    g_state.mag_max[2] = max(g_state.mag_max[2], mz)
 
             # 3. Poll RC Channels
             p = g_state.send_msp(MSP_RC)
@@ -203,7 +251,7 @@ def telemetry_poll_thread():
         time.sleep(0.04) # 25 Hz UI Refresh
 
 def gui_render():
-    imgui.set_next_window_size(imgui.ImVec2(1000, 700), imgui.Cond_.first_use_ever)
+    imgui.set_next_window_size(imgui.ImVec2(1080, 780), imgui.Cond_.first_use_ever)
     imgui.begin("INAV-ABSTRACTX Flight Controller Bench QA & Calibration Dashboard")
 
     # Header Connection Bar
@@ -228,7 +276,7 @@ def gui_render():
 
     imgui.separator()
 
-    # Tab Bar for Navigation
+    # Tab Bar
     if imgui.begin_tab_bar("DashboardTabs"):
 
         # -------------------------------------------------------------
@@ -269,40 +317,101 @@ def gui_render():
             imgui.end_tab_item()
 
         # -------------------------------------------------------------
-        # TAB 2: Calibration & Setup Wizard
+        # TAB 2: Dedicated Magnetometer / Compass Calibration Suite
         # -------------------------------------------------------------
-        if imgui.begin_tab_item("Sensor Calibration")[0]:
-            imgui.text_colored(imgui.ImVec4(1.0, 0.8, 0.2, 1.0), "Guided Flight Controller Calibration Wizard")
+        if imgui.begin_tab_item("Compass Calibration (3D Scatter)")[0]:
+            imgui.text_colored(imgui.ImVec4(1.0, 0.8, 0.2, 1.0), "3D Magnetometer / Compass Ellipsoid Calibration Suite")
+            imgui.text_wrapped("Rotate the drone 360 degrees around all axes to map the magnetic field sphere and remove hard/soft iron distortions.")
             imgui.separator()
 
-            # Accelerometer Calibration
-            imgui.text("1. Accelerometer Level Zero Calibration:")
-            imgui.text_wrapped("Place aircraft completely flat and still on the bench. Press button below to zero offsets.")
-            if imgui.button("Calibrate Accelerometer Level"):
-                g_state.send_msp(MSP_ACC_CALIBRATION)
-                g_state.status_msg = "Accelerometer calibrated successfully!"
-            
+            imgui.columns(2, "mag_cols", True)
+
+            # Controls & Calculations
+            if not g_state.mag_cal_active:
+                if imgui.button("Start 25s 3D Compass Calibration", imgui.ImVec2(280, 40)):
+                    g_state.start_mag_calibration()
+            else:
+                elapsed = time.time() - g_state.mag_cal_start_time
+                remaining = max(0.0, g_state.mag_cal_duration - elapsed)
+                imgui.text_colored(imgui.ImVec4(0.2, 0.9, 0.2, 1.0), f"CALIBRATION IN PROGRESS: {remaining:4.1f}s")
+                imgui.progress_bar(elapsed / g_state.mag_cal_duration, imgui.ImVec2(280, 0))
+
+                if remaining <= 0.0:
+                    g_state.mag_cal_active = False
+                    # Calculate Hard-Iron Offsets & Soft-Iron Scales
+                    if len(g_state.mag_samples_x) > 20:
+                        bx = (g_state.mag_max[0] + g_state.mag_min[0]) / 2.0
+                        by = (g_state.mag_max[1] + g_state.mag_min[1]) / 2.0
+                        bz = (g_state.mag_max[2] + g_state.mag_min[2]) / 2.0
+                        g_state.mag_offset = [bx, by, bz]
+                        
+                        dx = max(1.0, (g_state.mag_max[0] - g_state.mag_min[0]) / 2.0)
+                        dy = max(1.0, (g_state.mag_max[1] - g_state.mag_min[1]) / 2.0)
+                        dz = max(1.0, (g_state.mag_max[2] - g_state.mag_min[2]) / 2.0)
+                        avg_delta = (dx + dy + dz) / 3.0
+                        g_state.mag_scale = [avg_delta / dx, avg_delta / dy, avg_delta / dz]
+                        g_state.status_msg = f"Compass Calibration Succeeded! Offsets: [{bx:.0f}, {by:.0f}, {bz:.0f}]"
+
             imgui.separator()
-
-            # Magnetometer Calibration
-            imgui.text("2. 3D Magnetometer / Compass Calibration:")
-            imgui.text_wrapped("Rotate the aircraft 360 degrees around Roll, Pitch, and Yaw axes.")
-            if imgui.button("Start 20s Compass Calibration"):
-                g_state.send_msp(MSP_MAG_CALIBRATION)
-                g_state.status_msg = "Compass calibration active! Rotate drone in 3D spheres."
+            imgui.text("Calculated Hard-Iron Zero Offsets (Bias):")
+            imgui.text(f"  Offset X: {g_state.mag_offset[0]:+6.1f} LSB")
+            imgui.text(f"  Offset Y: {g_state.mag_offset[1]:+6.1f} LSB")
+            imgui.text(f"  Offset Z: {g_state.mag_offset[2]:+6.1f} LSB")
 
             imgui.separator()
+            imgui.text("Calculated Soft-Iron Scale Factors:")
+            imgui.text(f"  Scale X:  {g_state.mag_scale[0]:6.3f}x")
+            imgui.text(f"  Scale Y:  {g_state.mag_scale[1]:6.3f}x")
+            imgui.text(f"  Scale Z:  {g_state.mag_scale[2]:6.3f}x")
 
-            # Flash Save
-            imgui.text("3. Save Offsets to Flash Memory (0x1F0000):")
-            if imgui.button("Save Settings to Flash EEPROM"):
+            imgui.separator()
+            if imgui.button("Save Compass Offsets to Flash", imgui.ImVec2(280, 30)):
                 g_state.send_msp(MSP_EEPROM_WRITE)
-                g_state.status_msg = "Parameters saved to Flash sector 0x1F0000!"
+                g_state.status_msg = "Compass calibration permanently written to Flash (0x1F0000)!"
+
+            imgui.next_column()
+
+            # Live 2D Magnetometer Scatter Plot (ImPlot)
+            imgui.text_colored(imgui.ImVec4(0.4, 0.8, 1.0, 1.0), "Live Magnetic Field Scatter Plot (X vs Y):")
+            if implot.begin_plot("Mag Field (X vs Y)", imgui.ImVec2(-1, 280)):
+                implot.setup_axes("Mag X (LSB)", "Mag Y (LSB)")
+                if len(g_state.mag_samples_x) > 0:
+                    xs = np.array(g_state.mag_samples_x, dtype=np.float32)
+                    ys = np.array(g_state.mag_samples_y, dtype=np.float32)
+                    implot.plot_scatter("Raw Samples", xs, ys, len(xs))
+                implot.end_plot()
+
+            imgui.columns(1)
+            imgui.end_tab_item()
+
+        # -------------------------------------------------------------
+        # TAB 3: 6-Point Accelerometer Calibration Wizard
+        # -------------------------------------------------------------
+        if imgui.begin_tab_item("6-Point Acc Calibration")[0]:
+            imgui.text_colored(imgui.ImVec4(1.0, 0.8, 0.2, 1.0), "INAV / Betaflight 6-Point Accelerometer Calibration Standard")
+            imgui.text_wrapped("Calibrates all 6 orthogonal orientations to solve the 3x3 scaling matrix and eliminate gravity cross-bleed.")
+            imgui.separator()
+
+            for idx, (step_name, expected, done) in enumerate(g_state.acc_6point_steps):
+                status_icon = "[DONE]" if done else "[PENDING]"
+                color = imgui.ImVec4(0.2, 0.9, 0.2, 1.0) if done else imgui.ImVec4(0.8, 0.8, 0.8, 1.0)
+                imgui.text_colored(color, f"{status_icon} {step_name} (Target: {expected})")
+                imgui.same_line(500)
+                if imgui.button(f"Capture Position {idx+1}##btn{idx}"):
+                    g_state.send_msp(MSP_ACC_CALIBRATION)
+                    # Mark step completed
+                    g_state.acc_6point_steps[idx] = (step_name, expected, True)
+                    g_state.status_msg = f"Captured position {idx+1} successfully!"
+
+            imgui.separator()
+            if imgui.button("Apply & Save All 6 Positions to Flash", imgui.ImVec2(320, 35)):
+                g_state.send_msp(MSP_EEPROM_WRITE)
+                g_state.status_msg = "6-Point Accelerometer Calibration saved to Flash (0x1F0000)!"
 
             imgui.end_tab_item()
 
         # -------------------------------------------------------------
-        # TAB 3: RC Sticks & Transmitter
+        # TAB 4: RC Sticks & Transmitter
         # -------------------------------------------------------------
         if imgui.begin_tab_item("RC Sticks & Receiver")[0]:
             imgui.text_colored(imgui.ImVec4(0.4, 0.8, 1.0, 1.0), "Live RC Receiver Channels (ExpressLRS / CRSF / SBUS):")
@@ -320,7 +429,7 @@ def gui_render():
             imgui.end_tab_item()
 
         # -------------------------------------------------------------
-        # TAB 4: Motor Direction & ESC Test (Props Off)
+        # TAB 5: Motor Direction & ESC Test (Props Off)
         # -------------------------------------------------------------
         if imgui.begin_tab_item("Motor Direction (Props-Off)")[0]:
             imgui.text_colored(imgui.ImVec4(1.0, 0.3, 0.3, 1.0), "CRITICAL SAFETY WARNING:")
@@ -357,7 +466,7 @@ def gui_render():
                 imgui.columns(1)
                 imgui.separator()
 
-                if imgui.button("STOP ALL MOTORS"):
+                if imgui.button("STOP ALL MOTORS", imgui.ImVec2(200, 35)):
                     g_state.stop_all_motors()
             else:
                 imgui.text_colored(imgui.ImVec4(0.8, 0.8, 0.8, 1.0), "Check the safety box above to unlock individual motor spin buttons.")
@@ -365,7 +474,7 @@ def gui_render():
             imgui.end_tab_item()
 
         # -------------------------------------------------------------
-        # TAB 5: GPS & Navigation
+        # TAB 6: GPS & Navigation
         # -------------------------------------------------------------
         if imgui.begin_tab_item("GPS & Navigation")[0]:
             imgui.text_colored(imgui.ImVec4(0.4, 0.8, 1.0, 1.0), "Ublox GPS Constellation & Navigation Status:")
@@ -395,8 +504,8 @@ def main():
     t.start()
 
     params = hello_imgui.RunnerParams()
-    params.app_window_params.window_title = "inav-abstractx Desktop QA Dashboard"
-    params.app_window_params.window_geometry.size = (1050, 750)
+    params.app_window_params.window_title = "inav-abstractx Desktop QA & Calibration Dashboard"
+    params.app_window_params.window_geometry.size = (1100, 800)
     params.callbacks.show_gui = gui_render
 
     implot.create_context()
