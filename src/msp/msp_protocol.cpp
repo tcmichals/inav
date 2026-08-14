@@ -16,8 +16,9 @@
  */
 
 #include "msp_protocol.hpp"
-
 #include "config_registry.hpp"
+#include "ez_tune.hpp"
+
 
 namespace abstractx::msp {
 
@@ -299,9 +300,59 @@ bool MspEngine::process_command(Cmd cmd,
             tx_frame.push_u8(config.motor.motor_count);  // Number of ESCs
             return true;
 
+        // ---- INAV EZ-Tune MSP Commands (fc_msp.c:1764 & 3603) ----
+        case Cmd::EzTuneGet: {
+            const auto* ez = flight::ezTune();
+            tx_frame.push_u8(ez->enabled ? 1 : 0);
+            tx_frame.push_u16(ez->filter_hz);
+            tx_frame.push_u8(ez->axis_ratio);
+            tx_frame.push_u8(ez->response);
+            tx_frame.push_u8(ez->damping);
+            tx_frame.push_u8(ez->stability);
+            tx_frame.push_u8(ez->aggressiveness);
+            tx_frame.push_u8(ez->rate);
+            tx_frame.push_u8(ez->expo);
+            tx_frame.push_u8(ez->snappiness);
+            return true;
+        }
+
+        case Cmd::EzTuneSet: {
+            if (rx_payload.size() >= 10) {
+                auto* ez = flight::ezTuneMutable();
+                ez->enabled = (rx_payload[0] != 0);
+                ez->filter_hz = static_cast<uint16_t>(rx_payload[1] | (rx_payload[2] << 8));
+                ez->axis_ratio = rx_payload[3];
+                ez->response = rx_payload[4];
+                ez->damping = rx_payload[5];
+                ez->stability = rx_payload[6];
+                ez->aggressiveness = rx_payload[7];
+                ez->rate = rx_payload[8];
+                ez->expo = rx_payload[9];
+                if (rx_payload.size() >= 11) {
+                    ez->snappiness = rx_payload[10];
+                }
+                auto prof = flight::ezTuneUpdate();
+                config.pid.kp[0] = prof.pid_config.kp.roll;
+                config.pid.kp[1] = prof.pid_config.kp.pitch;
+                config.pid.kp[2] = prof.pid_config.kp.yaw;
+
+                config.pid.ki[0] = prof.pid_config.ki.roll;
+                config.pid.ki[1] = prof.pid_config.ki.pitch;
+                config.pid.ki[2] = prof.pid_config.ki.yaw;
+
+                config.pid.kd[0] = prof.pid_config.kd.roll;
+                config.pid.kd[1] = prof.pid_config.kd.pitch;
+                config.pid.kd[2] = prof.pid_config.kd.yaw;
+                return true;
+
+            }
+            return false;
+        }
+
         default:
             return false;
     }
 }
+
 
 } // namespace abstractx::msp

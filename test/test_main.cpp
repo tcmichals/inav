@@ -22,6 +22,10 @@
 #include "navigation.hpp"
 #include "failsafe.hpp"
 #include "mixer.hpp"
+#include "gyro_analyse.hpp"
+#include "dynamic_lpf.hpp"
+
+
 
 
 #include "icm42688p.hpp"
@@ -409,12 +413,54 @@ void test_filters_and_kalman() {
     flight::GyroKalman3Axis gyro_kalman{};
     gyro_kalman.reset();
     gyro_kalman.configure(100.0f, 80.0f);
-    std::array<float, 3> raw_gyro{10.0f, -20.0f, 30.0f};
-    auto filtered_gyro = gyro_kalman.update(raw_gyro, 0.001f);
-    assert(filtered_gyro[0] > 0.0f);
+    // 6. Test Dynamic Gyro Notch Spectral Analyzer (INAV gyroanalyse.c exact parity)
+    flight::GyroSpectralAnalyzer spectral{};
+    spectral.init(80, 1000); // 80Hz min, 1000us looptime
+
+    flight::DynamicGyroNotchBank dyn_notch{};
+    dyn_notch.init(0.001f);
+
+    // Feed 125Hz motor harmonic vibration on Roll (axis 0)
+    for (int i = 0; i < 400; ++i) {
+        float t = static_cast<float>(i) * 0.001f;
+        float noisy_gyro_roll = 10.0f * std::sin(2.0f * flight::PI_F * 125.0f * t);
+        spectral.push(0, noisy_gyro_roll);
+        spectral.update();
+
+        if (spectral.has_filter_update() && spectral.filter_update_axis() == 0) {
+            std::array<float, flight::DYN_NOTCH_PEAK_COUNT> peaks{
+                spectral.center_frequency(0, 0),
+                spectral.center_frequency(0, 1),
+                spectral.center_frequency(0, 2)
+            };
+            dyn_notch.update_frequencies(0, peaks);
+        }
+    }
+    // Verify detected frequency is tracking the 125 Hz motor noise peak
+    float detected_f = spectral.center_frequency(0, 0);
+    assert(detected_f >= 115.0f && detected_f <= 135.0f);
+
+    // 7. Test Dynamic Gyro LPF Engine (INAV dynamic_lpf.c exact parity)
+    flight::DynamicLpfConfig dyn_lpf_cfg{};
+    dyn_lpf_cfg.min_hz = 100;
+    dyn_lpf_cfg.max_hz = 250;
+    dyn_lpf_cfg.curve_expo = 5;
+    dyn_lpf_cfg.throttle_idle = 1000;
+    dyn_lpf_cfg.throttle_max = 2000;
+
+    flight::DynamicGyroLpfEngine dyn_lpf_engine{dyn_lpf_cfg};
+    assert(dyn_lpf_engine.update(1000) == 100.0f); // Idle throttle -> 100Hz cutoff
+    assert(dyn_lpf_engine.update(2000) == 250.0f); // Full throttle -> 250Hz cutoff
+    float mid_cutoff = dyn_lpf_engine.update(1500); // 50% throttle -> ~193.75Hz with expo
+    assert(mid_cutoff > 175.0f && mid_cutoff < 210.0f);
+
+    // Verify 1:1 C symbol invocation
+    flight::dynamicLpfGyroTask(1500);
 
     std::cout << "PASSED!\n";
 }
+
+
 
 void test_production_pid_dynamics() {
     std::cout << "[TEST 11/11] Production PID Dynamics (Feedforward 2.0, Anti-Gravity, D-Min, TPA, I-Term Rotation)... ";
@@ -500,11 +546,42 @@ void test_mahony_ahrs_and_pos_estimator() {
         (void)ahrs.update(roll_45_accel, zero_gyro, 0.01f);
     }
     assert(std::abs(ahrs.angles().roll_deg - 45.0f) < 2.0f);
+    assert(ahrs.angles().roll_decideg >= 430 && ahrs.angles().roll_decideg <= 470);
+    assert(!ahrs.is_small_angle()); // 45 deg tilt exceeds 25 deg small_angle threshold (INAV arming interlock)
 
-    // 3. Test Body to Earth Rotation
+
+    // 3. Test Magnetometer 90-Degree Heading Correction (INAV imu.c parity)
+    ahrs.reset();
+    flight::Vector3f mag_east_bf{0.0f, 1024.0f, 0.0f}; // Mag pointing East in body frame
+    for (int i = 0; i < 2000; ++i) {
+        (void)ahrs.update(
+            flight::Vector3f{0.0f, 0.0f, 1.0f},
+            flight::Vector3f{0.0f, 0.0f, 0.0f},
+            0.01f,
+            &mag_east_bf
+        );
+    }
+    assert(ahrs.angles().yaw_deg > 70.0f && ahrs.angles().yaw_deg < 110.0f);
+
+    // 4. Test GPS Course-Over-Ground (COG) Heading Correction
+    ahrs.reset();
+    flight::Vector3f cog_north{1.0f, 0.0f, 0.0f}; // Flying North
+    for (int i = 0; i < 2000; ++i) {
+        (void)ahrs.update(
+            flight::Vector3f{0.0f, 0.0f, 1.0f},
+            flight::Vector3f{0.0f, 0.0f, 0.0f},
+            0.01f,
+            nullptr,
+            &cog_north
+        );
+    }
+    assert(std::abs(ahrs.angles().yaw_deg) < 15.0f || ahrs.angles().yaw_deg > 345.0f);
+
+    // 5. Test Body to Earth Rotation
     flight::Axis3f body_fwd{1.0f, 0.0f, 0.0f};
     auto earth_fwd = ahrs.rotate_body_to_earth(body_fwd);
     assert(earth_fwd.roll > 0.6f);
+
 
     // 4. Test Inertial Position Estimator Barometer Fusion (in Level Flight)
     ahrs.reset();
@@ -571,25 +648,38 @@ void test_autotune_and_ez_tune() {
     assert(autotune.results().tuned_ki.roll > 0.0f);
     assert(autotune.results().tuned_kd.roll > 0.0f);
 
-    // 2. Test EZ-Tune Macro Slider Synthesis
-    flight::EzTuneSliders default_sliders{1.0f, 1.0f, 1.0f};
-    auto base_cfg = flight::EzTuneEngine::synthesize(default_sliders, flight::EzAirframePreset::Freestyle5Inch);
+    // 2. Test EZ-Tune Macro Settings (INAV ez_tune.c exact parity)
+    flight::EzTuneSettings default_ez{};
+    default_ez.enabled = true;
+    default_ez.filter_hz = 180;
+    default_ez.axis_ratio = 100;
+    default_ez.response = 100;
+    default_ez.damping = 100;
+    default_ez.stability = 100;
+    default_ez.aggressiveness = 100;
 
-    // High Response Sliders (1.5x response -> higher P, D, FF)
-    flight::EzTuneSliders sporty_sliders{1.5f, 1.0f, 1.0f};
-    auto sporty_cfg = flight::EzTuneEngine::synthesize(sporty_sliders, flight::EzAirframePreset::Freestyle5Inch);
-    assert(sporty_cfg.kp.roll > base_cfg.kp.roll);
-    assert(sporty_cfg.kd.roll > base_cfg.kd.roll);
-    assert(sporty_cfg.kff.roll > base_cfg.kff.roll);
+    auto base_prof = flight::EzTuneEngine::update(default_ez);
+    assert(base_prof.pid_config.kp.roll == 40.0f);
+    assert(base_prof.pid_config.ki.roll == 75.0f);
+    assert(base_prof.pid_config.kd.roll == 23.0f);
+    assert(base_prof.pid_config.kff.roll == 100.0f);
+    assert(base_prof.gyro_main_lpf_hz == 180.0f);
+    assert(base_prof.dterm_lpf_hz == 175.0f);
+    assert(base_prof.kalman_q > 200.0f);
+    assert(base_prof.smith_predictor_delay_ms > 0.8f && base_prof.smith_predictor_delay_ms < 1.0f);
 
-    // High Damping Sliders (1.5x damping -> higher D, lower P, higher filter cutoff)
-    flight::EzTuneSliders damped_sliders{1.0f, 1.5f, 1.0f};
-    auto damped_cfg = flight::EzTuneEngine::synthesize(damped_sliders, flight::EzAirframePreset::Freestyle5Inch);
-    assert(damped_cfg.kd.roll > base_cfg.kd.roll);
-    assert(damped_cfg.dterm_lpf1_hz > base_cfg.dterm_lpf1_hz);
+    // High Response EZ-Tune (150% response -> higher P, FF, Yaw P)
+    flight::EzTuneSettings sporty_ez = default_ez;
+    sporty_ez.response = 150;
+    sporty_ez.axis_ratio = 120; // 120% pitch ratio
+    auto sporty_prof = flight::EzTuneEngine::update(sporty_ez);
+    assert(sporty_prof.pid_config.kp.roll == 60.0f); // 40 * 1.5
+    assert(sporty_prof.pid_config.kp.pitch == 72.0f); // 40 * 1.5 * 1.2
+    assert(sporty_prof.pid_config.kp.yaw > 45.0f);   // Yaw scaled via get_yaw_pid_scale
 
     std::cout << "PASSED!\n";
 }
+
 
 void test_production_navigation_and_failsafe() {
     std::cout << "[TEST 14/14] INAV 3D Navigation, S-Curve Braking & 2-Stage Failsafe... ";

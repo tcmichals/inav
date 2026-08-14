@@ -101,7 +101,7 @@ public:
     // -------------------------------------------------------------------------
     // 1. Inertial Prediction Step (Runs at Flight Loop Rate: 1kHz–16kHz)
     // -------------------------------------------------------------------------
-    void predict_imu(const Axis3f& accel_body_g, const MahonyAhrs& ahrs, float dt_s) noexcept {
+    void predict_imu(const Axis3f& accel_body_g, const InavImu& ahrs, float dt_s) noexcept {
         if (dt_s <= 0.00001f || dt_s > 0.1f) dt_s = 0.001f;
 
         constexpr float GRAVITY_MSS = 9.80665f;
@@ -135,6 +135,8 @@ public:
         state_.vel_e_m_s += acc_earth.pitch * dt_s;
         state_.vel_d_m_s += acc_earth.yaw   * dt_s;
     }
+
+
 
     // -------------------------------------------------------------------------
     // 2. Barometer Altitude Correction Step (50Hz – 100Hz)
@@ -258,9 +260,11 @@ private:
     bool gps_origin_set_{false};
 };
 
-// Backwards compatibility alias for Ekf3Filter
+// INAV Position Estimator Aliases
 using PosEstimator = InertialPosEstimator;
+using InavPosEstimator = InertialPosEstimator;
 
 } // namespace abstractx::flight
 
 #endif // FLIGHT_POS_ESTIMATOR_HPP
+

@@ -61,13 +61,16 @@ enum class Cmd : uint16_t {
     SetRawRc       = 200,
     SetRawGps      = 201,
     SetPid         = 202,
-    AccCalibration = 205,
-    MagCalibration = 206,
+    AccCalibration = 205, // Trigger Accelerometer Zero Calibration
+    MagCalibration = 206, // Trigger Magnetometer 3D Calibration
     SetMisc        = 207,
-    SetMotor       = 214,
+    SetMotor       = 214, // Set isolated bench motor PWM test outputs
     Set4WayIf      = 245,
-    EepromWrite    = 250,
+    EepromWrite    = 250, // Save config to flash memory
 
+    // MSP2 INAV Commands
+    EzTuneGet      = 0x2405, // MSP2_COMMON_GET_EZ_TUNE
+    EzTuneSet      = 0x2406, // MSP2_COMMON_SET_EZ_TUNE
 
     // System
     Reboot       = 68,

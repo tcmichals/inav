@@ -164,9 +164,18 @@ else()
     )
     target_link_libraries(pico2_hw_test PRIVATE Boost::system)
 
+    # Submodule Direct Differential Test Target (INAV & Betaflight Submodules)
+    add_executable(submodule_differential_test
+        test/test_submodule_differential.cpp
+        ${COMMON_SOURCES}
+    )
+    target_link_libraries(submodule_differential_test PRIVATE Boost::system)
+
     # Enable CTest integration
     enable_testing()
     add_test(NAME UnitTests COMMAND run_unit_tests)
     add_test(NAME HardwareTest COMMAND pico2_hw_test)
+    add_test(NAME SubmoduleDifferentialTest COMMAND submodule_differential_test)
 endif()
+
 

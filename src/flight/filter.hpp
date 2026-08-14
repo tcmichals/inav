@@ -54,12 +54,18 @@ public:
         return state_;
     }
 
+    float apply(float input, float cutoff_hz, float dt) noexcept {
+        set_cutoff(cutoff_hz, dt);
+        return update(input);
+    }
+
     constexpr float state() const noexcept { return state_; }
 
 private:
     float state_{0.0f};
     float k_{1.0f};
 };
+
 
 // -----------------------------------------------------------------------------
 // 2. Second-Order Low-Pass Filter (PT2 - Cascaded 2x PT1)
@@ -137,6 +143,11 @@ public:
         x2_ = 0.0f;
     }
 
+    void set_notch(float center_freq_hz, float q, float dt_s) noexcept {
+        const float sample_rate_hz = (dt_s > 0.0f) ? (1.0f / dt_s) : 1000.0f;
+        configure(BiquadType::Notch, center_freq_hz, sample_rate_hz, q);
+    }
+
     void configure(BiquadType type, float center_freq_hz, float sample_rate_hz, float q = 0.7071f) noexcept {
         if (sample_rate_hz <= 0.0f || center_freq_hz <= 0.0f || center_freq_hz >= (sample_rate_hz / 2.0f)) {
             // Passthrough configuration
@@ -144,6 +155,7 @@ public:
             a1_ = 0.0f; a2_ = 0.0f;
             return;
         }
+
 
         const float omega = 2.0f * PI_F * center_freq_hz / sample_rate_hz;
         const float sn = std::sin(omega);

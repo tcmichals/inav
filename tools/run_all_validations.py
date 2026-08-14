@@ -40,15 +40,19 @@ def main():
     if not run_step("Execute Hardware Diagnostic Harness", "cd build && ./pico2_hw_test"):
         sys.exit(1)
 
-    # 4. Execute 4-Subsystem Differential Parity Test
+    # 4. Execute 6-Subsystem Differential Parity Test
     if not run_step("Execute Differential Math Parity Test", "python3 tools/compare_inav_parity.py"):
         sys.exit(1)
 
-    # 5. Execute Logic Analyzer Trace Validator
+    # 5. Execute Submodule-Direct Native C / C++20 Differential Test Runner
+    if not run_step("Execute Submodule Native Differential Test", "cd build && ./submodule_differential_test"):
+        sys.exit(1)
+
+    # 6. Execute Logic Analyzer Trace Validator
     if not run_step("Execute Offline Logic Analyzer Trace Validator", "python3 tools/validate_logic_trace.py"):
         sys.exit(1)
 
-    # 6. Execute Live SITL 6-DOF & MSP Protocol Python Integration Test
+    # 7. Execute Live SITL 6-DOF & MSP Protocol Python Integration Test
     sitl_cmd = "./build/inav_abstractx_sitl >/dev/null 2>&1 & SITL_PID=$! && sleep 1 && python3 tools/test_sitl_integration.py; kill $SITL_PID 2>/dev/null"
     if not run_step("Execute Live SITL Python Integration Test", sitl_cmd):
         sys.exit(1)
@@ -56,6 +60,7 @@ def main():
     print("\n====================================================")
     print(" ALL SYSTEM VALIDATION PIPELINES PASSED 100%!")
     print("====================================================")
+
 
 if __name__ == "__main__":
     main()

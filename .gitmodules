@@ -1,0 +1,6 @@
+[submodule "external/inav"]
+	path = external/inav
+	url = https://github.com/iNavFlight/inav.git
+[submodule "external/betaflight"]
+	path = external/betaflight
+	url = https://github.com/betaflight/betaflight.git
