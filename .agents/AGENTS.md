@@ -18,6 +18,10 @@
 
 ## Architectural & Design Rules
 1. **Flexible Software TLP Sizing & FPGA 64-Byte Padding**: In software (Linux and microcontrollers), TLP packet lengths can be whatever size they naturally need to be (sized payloads with a length header field to conserve SRAM and minimize memory copy overhead). When crossing into or out of an FPGA or PCIe hardware domain, software pads (or unpads) the packet to exactly **64 bytes (512 bits)** to meet the FPGA's single-cycle parallel bus and DMA requirements.
+2. **Concurrent Asynchronous Waits & Zero Sequential Blind Sleeps (`when_any` / `when_all`)**: Never implement legacy sequential blind delays (e.g. `start_conversion()` followed by a blind `sleep(10ms)` followed by a blocking `read()`). All asynchronous hardware drivers (SPI DMA, I2C, UART, Barometer, Magnetometer, GPS, RC Receiver) MUST use concurrent parallel combinators:
+   - **`when_any(hardware_io_task, timeout_task)` (`||`)**: Every hardware transaction must race concurrently against an explicit safety watchdog timer (`sleep_ms` / `sleep_us`) to prevent bus lockups and achieve minimum latency (immediate return upon DMA completion).
+   - **`when_all(sensor1_task, sensor2_task)` (`&&`)**: Multi-sensor synchronization (e.g. Dual-IMU redundancy, EKF multi-sensor epochs) must execute concurrently across independent hardware channels and join without sequential CPU stalling.
+
 
 ## Testing & Quality Assurance Rules
 1. **CppUTest Standard**: Every ported flight control module (filtering, Betaflight Rate PID, Mahony AHRS, INAV Position Estimator, AutoTune, EZ-Tune, Failsafe, Navigation) MUST have comprehensive CppUTest test groups (`TEST_GROUP`, `TEST`, `DOUBLES_EQUAL`, `CHECK_TRUE`) validating mathematical accuracy, filter attenuation, state transitions, and edge cases.

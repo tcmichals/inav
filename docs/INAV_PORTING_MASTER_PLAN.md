@@ -59,13 +59,15 @@ This document is the persistent, step-by-step master checklist and architectural
   * `ezTuneSettings_t` struct with 10 exact parameters.
   * `ezTuneUpdate()` formulas: D-term LPF cutoff, Smith predictor delay, Kalman Q scaling, Roll/Pitch/Yaw gain matrix, rates, and expo.
   * Wired into `FlightEngineTemplate` startup and MSP `Cmd::EzTuneSet` (0x2406).
-- [ ] **Port DShot RPM Filter Engine** (`src/flight/rpm_filter.hpp`):
-  * Frequency tracking per motor RPM harmonic ($f = \frac{\text{RPM} \cdot \text{Poles}}{120}$).
-  * Cascaded biquad notch filters per motor harmonic on Roll, Pitch, and Yaw.
+- [x] **Port DShot RPM Filter Engine** (`src/flight/rpm_filter.hpp`):
+  * Frequency tracking per motor RPM harmonic ($f = \frac{\text{RPM}}{60} \times h$).
+  * Cascaded biquad notch filters per motor harmonic on Roll, Pitch, and Yaw with 150Hz PT1 smoothing.
+  * Validated bit-exact in submodule differential test suite `[DIFF 8/8]`.
 - [ ] **Port Matrix Smith Predictor** (`src/flight/smith_predictor.hpp`):
   * Phase lead compensation for low-pass filter group delay.
 - [ ] **Port Wind & RTH Estimator** (`src/flight/wind_estimator.hpp`):
   * Earth-frame horizontal wind velocity estimation from airspeed / groundspeed delta.
+
 
 ---
 

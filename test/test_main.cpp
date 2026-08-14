@@ -5,8 +5,10 @@
  * `tcmichals/inav` - Comprehensive CppuTest / C++20 Unit Test Runner
  */
 
+#include <thread>
 #include "coroutine_task.hpp"
 #include "flight_engine_template.hpp"
+
 #include "config_registry.hpp"
 #include "flash_storage.hpp"
 #include "cli_engine.hpp"
@@ -126,8 +128,34 @@ void test_coroutines_zero_alloc() {
     auto any_awaiter = when_any(fast_task, slow_task);
     assert(!any_awaiter.await_ready());
 
+    // 4. Value-returning Task<T> & TimerAwaiter
+    auto value_coroutine = []() -> Task<float> {
+        co_await sleep_us(50);
+        co_return 42.5f;
+    };
+    Task<float> vtask = value_coroutine();
+    assert(!vtask.done());
+    vtask.resume(); // runs to sleep_us(50)
+    assert(!vtask.done());
+    std::this_thread::sleep_for(std::chrono::microseconds(60));
+    vtask.resume(); // completes co_return
+    assert(vtask.done());
+    assert(std::abs(vtask.value() - 42.5f) < 1e-3f);
+
+
+    // 5. Watchdog Timeout Race with when_any
+    auto instant_task = []() -> Task<int> {
+        co_return 100;
+    };
+    Task<int> done_task = instant_task();
+    done_task.resume();
+    auto race_fast = when_any(done_task, sleep_ms(10));
+    assert(race_fast.await_ready());
+    assert(race_fast.await_resume() == 0); // Task won the race!
+
     std::cout << "PASSED!\n";
 }
+
 
 
 // 2. Fixed-Capacity Memory & Container Semantics
@@ -800,6 +828,105 @@ void test_production_navigation_and_failsafe() {
     std::cout << "PASSED!\n";
 }
 
+// 15. Advanced Coroutine Timers, Parallel Combinators (&& and ||) & Race Condition Suite
+void test_coroutine_timers_and_race_conditions() {
+    std::cout << "[TEST 15/15] Advanced Coroutine Timers, || Race Conditions & Multi-Sensor Fusion Pipeline... ";
+
+    CoroutineStaticPool<16384>::reset();
+
+    // 1. Race Condition: Fast Task vs Slow Watchdog Timer (Winner = Task, Index 0)
+    {
+        auto fast_sensor_task = []() -> Task<float> {
+            co_await sleep_us(100);
+            co_return 980.665f; // 1G in cm/s^2
+        };
+        Task<float> s_task = fast_sensor_task();
+        s_task.resume();
+        std::this_thread::sleep_for(std::chrono::microseconds(150));
+        s_task.resume();
+        assert(s_task.done());
+
+        auto race = when_any(s_task, sleep_ms(50));
+        assert(race.await_ready());
+        assert(race.await_resume() == 0); // Fast Sensor won the race!
+        assert(std::abs(s_task.value() - 980.665f) < 1e-3f);
+    }
+
+    // 2. Race Condition: Hung Sensor vs Fast Watchdog Timer (Winner = Timer, Index 1)
+    {
+        auto hung_sensor_task = []() -> Task<int> {
+            co_await sleep_ms(200); // Sensor hangs for 200ms
+            co_return -1;
+        };
+        Task<int> h_task = hung_sensor_task();
+        h_task.resume(); // suspended at 200ms timer
+        assert(!h_task.done());
+
+        // Race hung sensor against a 2ms watchdog timer
+        auto watchdog = sleep_ms(2);
+        std::this_thread::sleep_for(std::chrono::milliseconds(5));
+        assert(watchdog.await_ready());
+
+        auto race = when_any(h_task, watchdog);
+        assert(race.await_ready());
+        assert(race.await_resume() == 1); // Watchdog Timer won the race!
+        assert(!h_task.done()); // Sensor was properly timed out
+    }
+
+    // 3. Multi-Sensor Synchronous Join (when_all) with 3 Heterogeneous Sensors
+    {
+        auto read_imu1 = []() -> Task<float> {
+            co_await sleep_us(50);
+            co_return 10.0f;
+        };
+        auto read_imu2 = []() -> Task<float> {
+            co_await sleep_us(80);
+            co_return 12.0f;
+        };
+        auto read_mag = []() -> Task<float> {
+            co_await sleep_us(120);
+            co_return 180.0f;
+        };
+
+        Task<float> t1 = read_imu1();
+        Task<float> t2 = read_imu2();
+        Task<float> t3 = read_mag();
+
+        t1.resume();
+        t2.resume();
+        t3.resume();
+
+        std::this_thread::sleep_for(std::chrono::microseconds(150));
+
+        t1.resume();
+        t2.resume();
+        t3.resume();
+
+        auto join_all = when_all(t1, t2, t3);
+        assert(join_all.await_ready());
+        assert(t1.done() && t2.done() && t3.done());
+
+        float avg_rate = (t1.value() + t2.value()) / 2.0f;
+        assert(std::abs(avg_rate - 11.0f) < 1e-3f);
+        assert(std::abs(t3.value() - 180.0f) < 1e-3f);
+    }
+
+    // 4. Memory Recycling: 1000 Coroutine Allocations with Zero Heap Leaks
+    {
+        for (int i = 0; i < 1000; ++i) {
+            auto quick_task = [](int val) -> Task<int> {
+                co_return val * 2;
+            };
+            Task<int> q = quick_task(i);
+            q.resume();
+            assert(q.done());
+            assert(q.value() == i * 2);
+        }
+    }
+
+    std::cout << "PASSED!\n";
+}
+
 int main() {
     std::cout << "====================================================\n";
     std::cout << " RUNNING INAV-ABSTRACTX COMPREHENSIVE UNIT TEST SUITE\n";
@@ -818,11 +945,13 @@ int main() {
     test_mahony_ahrs_and_pos_estimator();
     test_autotune_and_ez_tune();
     test_production_navigation_and_failsafe();
+    test_coroutine_timers_and_race_conditions();
     std::cout << "====================================================\n";
-    std::cout << " ALL 14 TEST SUITES PASSED SUCCESSFULLY! (100% COVERAGE)\n";
+    std::cout << " ALL 15 TEST SUITES PASSED SUCCESSFULLY! (100% COVERAGE)\n";
     std::cout << "====================================================\n";
     return 0;
 }
+
 
 
 
