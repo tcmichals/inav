@@ -165,7 +165,9 @@ To configure, open **INAV Configurator**, select **TCP** connection to `127.0.0.
 * **[`docs/SITL_SIMULATOR.md`](docs/SITL_SIMULATOR.md)**: **Software-In-The-Loop (SITL) Simulator, 6-DOF Multicopter Physics Engine & Python Test Guide**.
 * **[`docs/PICO2W_WIRING_AND_SETUP.md`](docs/PICO2W_WIRING_AND_SETUP.md)**: **Raspberry Pi Pico 2 W Complete Hardware Wiring, Pinout, Flashing & Pre-Flight Setup Guide**.
 * **[`docs/FIRST_FLIGHT_MAIDEN_CHECKLIST.md`](docs/FIRST_FLIGHT_MAIDEN_CHECKLIST.md)**: **First Flight (Maiden) Airframe Testing Protocol & Pre-Flight Safety Checklist**.
+* **[`docs/CALIBRATION_SETUP_AND_PREFLIGHT_GUIDE.md`](docs/CALIBRATION_SETUP_AND_PREFLIGHT_GUIDE.md)**: **Master Calibration, Setup & Pre-Flight Field Guide (Distilled from 10+ Years of INAV & Betaflight)**.
 * **[`docs/BLACKBOX_LOGGING.md`](docs/BLACKBOX_LOGGING.md)**: High-speed BareCTF binary TLP logging, UDP port 19000 live streaming, and `.BBL` Blackbox Explorer conversion.
+
 * **[`docs/FLIGHT_ESTIMATION_AND_CONTROL.md`](docs/FLIGHT_ESTIMATION_AND_CONTROL.md)**: Sensor filtering pipelines, Betaflight PID dynamics, and INAV Inertial Position Estimator mathematics.
 * **[`docs/TARGET_PICO2.md`](docs/TARGET_PICO2.md)**: RP2350 Pico 2 & Pico 2 W hardware specifications, triple-PIO offloaders, and pinouts.
 * **[`docs/HARDWARE_DRIVERS.md`](docs/HARDWARE_DRIVERS.md)**: Peripheral driver catalog (ICM-42688-P, BMI088, DPS310, BMP280, ExpressLRS/CRSF, Ublox GPS).
