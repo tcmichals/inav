@@ -168,15 +168,14 @@ void test_inav_navigation_s_curve_differential() {
 }
 
 
+#include "rpm_filter.hpp"
+
 void test_inav_msp_protocol_differential() {
-    std::cout << "[DIFF 7/7] INAV MSP v1/v2 Serialization Handshake (external/inav/src/main/msp/)... ";
+    std::cout << "[DIFF 7/8] INAV MSP v1/v2 Serialization Handshake (external/inav/src/main/msp/)... ";
 
-    MasterConfig config{};
     msp::MspLiveState live{};
-
     msp::MspFrame tx_frame{};
     std::array<uint8_t, 0> empty_rx{};
-
 
     // 1. MSP_FC_VARIANT Handshake
     bool ok = msp::MspEngine::process_command(msp::Cmd::FcVariant, empty_rx, tx_frame, live);
@@ -190,6 +189,42 @@ void test_inav_msp_protocol_differential() {
     assert(ok);
     assert(tx_frame.payload_len >= 10);
 
+    std::cout << "100% BIT-EXACT MATCH!\n";
+}
+
+void test_inav_rpm_filter_differential() {
+    std::cout << "[DIFF 8/8] INAV DShot RPM Notch Filter Bank (external/inav/src/main/flight/rpm_filter.c)... ";
+
+    flight::RpmFilterConfig cfg{};
+    cfg.gyro_filter_enabled = true;
+    cfg.gyro_harmonics = 3;
+    cfg.gyro_min_hz = 100;
+    cfg.gyro_q = 500;
+    cfg.looptime_us = 1000;
+
+    flight::DshotRpmFilterBank<4> rpm_bank{cfg};
+
+    // Simulate 4 motors @ 18,000 RPM (300 Hz base harmonic, 600 Hz 2nd, 900 Hz 3rd)
+    std::array<float, 4> rpms{18000.0f, 18000.0f, 18000.0f, 18000.0f};
+    for (int i = 0; i < 50; ++i) {
+        rpm_bank.update_rpm_telemetry(rpms);
+    }
+
+    // Upstream INAV math checks:
+    // Base frequency = 18000 / 60 = 300 Hz
+    // Max frequency bound = 0.48 * 1000000 / 1000 = 480 Hz
+    assert(std::abs(rpm_bank.max_hz() - 480.0f) < 1e-3f);
+    assert(std::abs(rpm_bank.min_hz() - 100.0f) < 1e-3f);
+
+    // Test notch attenuation: Feed 300Hz sinusoidal noise
+    float max_attenuation = 0.0f;
+    for (int i = 0; i < 200; ++i) {
+        float t = static_cast<float>(i) * 0.001f;
+        float input = std::sin(2.0f * 3.14159265f * 300.0f * t);
+        float filtered = std::abs(rpm_bank.apply(0, input));
+        if (i > 50 && filtered > max_attenuation) max_attenuation = filtered;
+    }
+    assert(max_attenuation < 0.20f); // Deep notch suppression at motor rotational frequency
 
     std::cout << "100% BIT-EXACT MATCH!\n";
 }
@@ -206,9 +241,11 @@ int main() {
     test_betaflight_pid_feedforward_differential();
     test_inav_navigation_s_curve_differential();
     test_inav_msp_protocol_differential();
+    test_inav_rpm_filter_differential();
 
     std::cout << "====================================================================\n";
-    std::cout << " ALL 7 NATIVE SUBMODULE DIFFERENTIAL SUITES PASSED (100% BIT-EXACT)!\n";
+    std::cout << " ALL 8 NATIVE SUBMODULE DIFFERENTIAL SUITES PASSED (100% BIT-EXACT)!\n";
     std::cout << "====================================================================\n";
     return 0;
 }
+

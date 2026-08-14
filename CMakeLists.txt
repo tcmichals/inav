@@ -52,7 +52,11 @@ include_directories(
     "${CMAKE_CURRENT_SOURCE_DIR}/src/drivers/rc"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/drivers/led"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/drivers/display"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/drivers/rangefinder"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/drivers/fake"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/logging"
+
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/scheduler"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/target"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/target/linux_common"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/target/sitl"
@@ -60,6 +64,7 @@ include_directories(
     "${ABSTRACTX_PATH}/include"
 
 )
+
 
 # Common source files (portable — no platform I/O)
 set(COMMON_SOURCES
@@ -171,11 +176,29 @@ else()
     )
     target_link_libraries(submodule_differential_test PRIVATE Boost::system)
 
+    # Legacy Task Scheduler vs C++20 Coroutine Performance Benchmark
+    add_executable(scheduler_benchmark
+        test/test_scheduler_benchmark.cpp
+        ${COMMON_SOURCES}
+    )
+    target_link_libraries(scheduler_benchmark PRIVATE Boost::system)
+
+    # Full-Stack Multi-Phase Flight Mission Parity Test
+    add_executable(full_stack_parity_test
+        test/test_full_stack_parity.cpp
+        ${COMMON_SOURCES}
+    )
+    target_link_libraries(full_stack_parity_test PRIVATE Boost::system)
+
     # Enable CTest integration
     enable_testing()
     add_test(NAME UnitTests COMMAND run_unit_tests)
     add_test(NAME HardwareTest COMMAND pico2_hw_test)
     add_test(NAME SubmoduleDifferentialTest COMMAND submodule_differential_test)
+    add_test(NAME SchedulerBenchmark COMMAND scheduler_benchmark)
+    add_test(NAME FullStackParityTest COMMAND full_stack_parity_test)
 endif()
+
+
 
 

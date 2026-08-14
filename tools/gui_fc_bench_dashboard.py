@@ -107,14 +107,17 @@ class DashboardState:
         self.airframe_type_idx = 0
         self.rx_protocol_idx = 0
         self.channel_map_idx = 0
+        self.rangefinder_type_idx = 0
+        self.gps_protocol_idx = 0
         self.arm_switch_idx = 0
         self.led_state = False
         self.buzzer_state = False
 
+
         # Calibration State
         self.mag_cal_active = False
         self.mag_cal_start_time = 0.0
-        self.mag_cal_duration = 25.0
+        self.mag_cal_duration = 30.0
         self.mag_samples_x = []
         self.mag_samples_y = []
         self.mag_samples_z = []
@@ -122,6 +125,14 @@ class DashboardState:
         self.mag_max = [-99999, -99999, -99999]
         self.mag_offset = [0.0, 0.0, 0.0]
         self.mag_scale = [1.0, 1.0, 1.0]
+        self.mag_sectors = {
+            "Level Flat (Yaw 360°)": 0,
+            "Inverted (Upside Down)": 0,
+            "Nose DOWN (Floor)": 0,
+            "Nose UP (Ceiling)": 0,
+            "Left Wing DOWN": 0,
+            "Right Wing DOWN": 0,
+        }
 
         self.acc_6point_steps = [
             ("1. Level (Landing Skids)", "+1.0G on Z", False),
@@ -131,6 +142,7 @@ class DashboardState:
             ("5. Nose DOWN (Pointing to Floor)", "+1.0G on X", False),
             ("6. Inverted (Upside Down)", "-1.0G on Z", False),
         ]
+
 
         self.props_removed_confirmed = False
         self.status_msg = "Ready. Connect to Flight Controller or enable Demo Mode."
@@ -211,6 +223,44 @@ class DashboardState:
         payload = struct.pack('<HHHHHHHH', 1000, 1000, 1000, 1000, 1000, 1000, 1000, 1000)
         self.send_msp(MSP_SET_MOTOR, payload)
 
+    def start_mag_calibration(self):
+        self.mag_cal_active = True
+        self.mag_cal_start_time = time.time()
+        self.mag_samples_x = []
+        self.mag_samples_y = []
+        self.mag_samples_z = []
+        self.mag_min = [99999, 99999, 99999]
+        self.mag_max = [-99999, -99999, -99999]
+        for k in self.mag_sectors:
+            self.mag_sectors[k] = 0
+        self.send_msp(MSP_MAG_CALIBRATION)
+
+    def record_mag_sample(self, mx: float, my: float, mz: float, ax: float, ay: float, az: float):
+        self.mag_samples_x.append(float(mx))
+        self.mag_samples_y.append(float(my))
+        self.mag_samples_z.append(float(mz))
+        self.mag_min[0] = min(self.mag_min[0], mx)
+        self.mag_min[1] = min(self.mag_min[1], my)
+        self.mag_min[2] = min(self.mag_min[2], mz)
+        self.mag_max[0] = max(self.mag_max[0], mx)
+        self.mag_max[1] = max(self.mag_max[1], my)
+        self.mag_max[2] = max(self.mag_max[2], mz)
+
+        # Categorize sample into 3D sphere orientation sectors:
+        if az > 0.65:
+            self.mag_sectors["Level Flat (Yaw 360°)"] += 1
+        elif az < -0.65:
+            self.mag_sectors["Inverted (Upside Down)"] += 1
+        elif ax > 0.65:
+            self.mag_sectors["Nose DOWN (Floor)"] += 1
+        elif ax < -0.65:
+            self.mag_sectors["Nose UP (Ceiling)"] += 1
+        elif ay > 0.65:
+            self.mag_sectors["Left Wing DOWN"] += 1
+        elif ay < -0.65:
+            self.mag_sectors["Right Wing DOWN"] += 1
+
+
 g_state = DashboardState()
 
 def telemetry_poll_thread():
@@ -249,6 +299,35 @@ def telemetry_poll_thread():
             g_state.rc_channels[2] = base_thr                              # Throttle
             g_state.rc_channels[3] = 1500 + int(math.sin(t * 1.4) * 280.0)# Yaw
 
+            if g_state.mag_cal_active:
+                cal_elapsed = time.time() - g_state.mag_cal_start_time
+                phase_idx = int(cal_elapsed / 4.8) % 6
+                if phase_idx == 0:
+                    ax, ay, az = 0.0, 0.0, 1.0
+                    ang = cal_elapsed * 4.5
+                    mx, my, mz = 360.0 * math.cos(ang), 360.0 * math.sin(ang), 400.0
+                elif phase_idx == 1:
+                    ax, ay, az = 1.0, 0.0, 0.0
+                    ang = cal_elapsed * 4.5
+                    mx, my, mz = 400.0, 360.0 * math.cos(ang), 360.0 * math.sin(ang)
+                elif phase_idx == 2:
+                    ax, ay, az = -1.0, 0.0, 0.0
+                    ang = cal_elapsed * 4.5
+                    mx, my, mz = -400.0, 360.0 * math.cos(ang), 360.0 * math.sin(ang)
+                elif phase_idx == 3:
+                    ax, ay, az = 0.0, 1.0, 0.0
+                    ang = cal_elapsed * 4.5
+                    mx, my, mz = 360.0 * math.cos(ang), 400.0, 360.0 * math.sin(ang)
+                elif phase_idx == 4:
+                    ax, ay, az = 0.0, -1.0, 0.0
+                    ang = cal_elapsed * 4.5
+                    mx, my, mz = 360.0 * math.cos(ang), -400.0, 360.0 * math.sin(ang)
+                else:
+                    ax, ay, az = 0.0, 0.0, -1.0
+                    ang = cal_elapsed * 4.5
+                    mx, my, mz = 360.0 * math.cos(ang), 360.0 * math.sin(ang), -400.0
+                g_state.record_mag_sample(mx + float(np.random.normal(0, 12)), my + float(np.random.normal(0, 12)), mz + float(np.random.normal(0, 12)), ax, ay, az)
+
             time.sleep(0.025)
             continue
 
@@ -264,20 +343,16 @@ def telemetry_poll_thread():
             p = g_state.send_msp(MSP_RAW_IMU)
             if p and len(p) >= 18:
                 ax, ay, az, gx, gy, gz, mx, my, mz = struct.unpack('<hhhhhhhhh', p[:18])
-                g_state.accel_g = [ax / 512.0, ay / 512.0, az / 512.0]
+                acc_ax = ax / 512.0
+                acc_ay = ay / 512.0
+                acc_az = az / 512.0
+                g_state.accel_g = [acc_ax, acc_ay, acc_az]
                 g_state.gyro_dps = [gx * (2000.0/32768.0), gy * (2000.0/32768.0), gz * (2000.0/32768.0)]
                 g_state.mag_raw = [mx, my, mz]
 
                 if g_state.mag_cal_active:
-                    g_state.mag_samples_x.append(float(mx))
-                    g_state.mag_samples_y.append(float(my))
-                    g_state.mag_samples_z.append(float(mz))
-                    g_state.mag_min[0] = min(g_state.mag_min[0], mx)
-                    g_state.mag_min[1] = min(g_state.mag_min[1], my)
-                    g_state.mag_min[2] = min(g_state.mag_min[2], mz)
-                    g_state.mag_max[0] = max(g_state.mag_max[0], mx)
-                    g_state.mag_max[1] = max(g_state.mag_max[1], my)
-                    g_state.mag_max[2] = max(g_state.mag_max[2], mz)
+                    g_state.record_mag_sample(float(mx), float(my), float(mz), acc_ax, acc_ay, acc_az)
+
 
             p = g_state.send_msp(MSP_MOTOR)
             if p and len(p) >= 8:
@@ -365,7 +440,8 @@ def render_world_class_3d_viewport(draw_list, pos, size):
     col_bg = imgui.color_convert_float4_to_u32(imgui.ImVec4(0.05, 0.07, 0.10, 1.0))
     col_border = imgui.color_convert_float4_to_u32(imgui.ImVec4(0.0, 0.85, 1.0, 0.85))
     draw_list.add_rect_filled(pos, imgui.ImVec2(pos.x + size.x, pos.y + size.y), col_bg, 8.0)
-    draw_list.add_rect(pos, imgui.ImVec2(pos.x + size.x, pos.y + size.y), col_border, 8.0, 0, 1.5)
+    draw_list.add_rect(pos, imgui.ImVec2(pos.x + size.x, pos.y + size.y), col_border, 8.0, 1.5)
+
 
     io = imgui.get_io()
     mouse_pos = io.mouse_pos
@@ -430,28 +506,39 @@ def render_world_class_3d_viewport(draw_list, pos, size):
         top_verts.append(Vec3(math.cos(ang) * hub_radius, math.sin(ang) * hub_radius, +hub_h))
         bot_verts.append(Vec3(math.cos(ang) * hub_radius, math.sin(ang) * hub_radius, -hub_h))
 
-    polygons.append(Polygon3D(top_verts, imgui.ImVec4(0.18, 0.22, 0.28, 1.0)))
-    polygons.append(Polygon3D(bot_verts[::-1], imgui.ImVec4(0.12, 0.15, 0.20, 1.0)))
+    # 3D Main Central Body Plates (High-Visibility Pearl White / Titanium)
+    polygons.append(Polygon3D(top_verts, imgui.ImVec4(0.92, 0.95, 0.98, 1.0)))
+    polygons.append(Polygon3D(bot_verts[::-1], imgui.ImVec4(0.70, 0.75, 0.82, 1.0)))
+
+    # Central Avionics Pod / Canopy
+    canopy_top = [
+        Vec3(math.cos(k * (2.0 * math.pi / hub_corners)) * hub_radius * 0.65,
+             math.sin(k * (2.0 * math.pi / hub_corners)) * hub_radius * 0.65,
+             +hub_h * 1.8) for k in range(hub_corners)
+    ]
+    polygons.append(Polygon3D(canopy_top, imgui.ImVec4(0.0, 0.88, 1.0, 1.0)))
 
     for k in range(hub_corners):
         k_next = (k + 1) % hub_corners
-        polygons.append(Polygon3D([top_verts[k], top_verts[k_next], bot_verts[k_next], bot_verts[k]], imgui.ImVec4(0.15, 0.19, 0.24, 1.0)))
+        polygons.append(Polygon3D([top_verts[k], top_verts[k_next], bot_verts[k_next], bot_verts[k]], imgui.ImVec4(0.60, 0.65, 0.72, 1.0)))
+        polygons.append(Polygon3D([top_verts[k], top_verts[k_next], canopy_top[k_next], canopy_top[k]], imgui.ImVec4(0.20, 0.75, 0.95, 1.0)))
 
-    # FPV Camera Nose Cone
+    # FPV Camera Nose Cone (High-Visibility Neon Amber / Cyan)
     cam_pod = [
-        Vec3(-0.12, +0.32, +0.14), Vec3(+0.12, +0.32, +0.14),
-        Vec3(+0.08, +0.52, +0.02), Vec3(-0.08, +0.52, +0.02)
+        Vec3(-0.14, +0.30, +0.16), Vec3(+0.14, +0.30, +0.16),
+        Vec3(+0.09, +0.54, +0.02), Vec3(-0.09, +0.54, +0.02)
     ]
-    polygons.append(Polygon3D(cam_pod, imgui.ImVec4(0.0, 0.85, 1.0, 0.95)))
+    polygons.append(Polygon3D(cam_pod, imgui.ImVec4(1.0, 0.55, 0.05, 1.0)))
 
     motor_coords = [
-        (+0.95, -0.95, 0.0, -1, "M1"),
-        (+0.95, +0.95, 0.0, +1, "M2"),
-        (-0.95, -0.95, 0.0, +1, "M3"),
-        (-0.95, +0.95, 0.0, -1, "M4")
+        (+0.95, -0.95, 0.0, -1, "M1"), # Rear-Right (White)
+        (+0.95, +0.95, 0.0, +1, "M2"), # Front-Right (Orange)
+        (-0.95, -0.95, 0.0, +1, "M3"), # Rear-Left (White)
+        (-0.95, +0.95, 0.0, -1, "M4")  # Front-Left (Orange)
     ]
 
-    arm_width = 0.045
+
+    arm_width = 0.050
     for mx, my, mz, spin_dir, name in motor_coords:
         length = math.sqrt(mx**2 + my**2)
         nx = -my / length * arm_width
@@ -464,8 +551,12 @@ def render_world_class_3d_viewport(draw_list, pos, size):
             Vec3(nx, ny, -hub_h*0.8), Vec3(-nx, -ny, -hub_h*0.8),
             Vec3(mx - nx, my - ny, -hub_h*0.8), Vec3(mx + nx, my + ny, -hub_h*0.8)
         ]
-        polygons.append(Polygon3D(arm_top, imgui.ImVec4(0.24, 0.28, 0.34, 1.0)))
-        polygons.append(Polygon3D(arm_bot, imgui.ImVec4(0.16, 0.20, 0.25, 1.0)))
+        # Front arms in Neon Orange for orientation; Rear arms in Pearl White
+        is_front = (my > 0.0)
+        arm_color_top = imgui.ImVec4(1.0, 0.55, 0.10, 1.0) if is_front else imgui.ImVec4(0.88, 0.92, 0.96, 1.0)
+        arm_color_bot = imgui.ImVec4(0.80, 0.40, 0.08, 1.0) if is_front else imgui.ImVec4(0.70, 0.75, 0.80, 1.0)
+        polygons.append(Polygon3D(arm_top, arm_color_top))
+        polygons.append(Polygon3D(arm_bot, arm_color_bot))
 
     transformed_faces = []
     for poly in polygons:
@@ -482,7 +573,7 @@ def render_world_class_3d_viewport(draw_list, pos, size):
             norm.x /= norm_mag; norm.y /= norm_mag; norm.z /= norm_mag
 
         dot = max(0.0, norm.x * light_dir.x + norm.y * light_dir.y + norm.z * light_dir.z)
-        intensity = 0.35 + 0.65 * dot
+        intensity = 0.45 + 0.55 * dot
 
         lit_color = imgui.color_convert_float4_to_u32(imgui.ImVec4(
             min(1.0, poly.base_color.x * intensity),
@@ -496,18 +587,23 @@ def render_world_class_3d_viewport(draw_list, pos, size):
 
     transformed_faces.sort(key=lambda item: item[0], reverse=True)
 
+    col_edge = imgui.color_convert_float4_to_u32(imgui.ImVec4(0.1, 0.15, 0.22, 0.5))
     for depth, pts, color in transformed_faces:
         if len(pts) == 3:
             draw_list.add_triangle_filled(pts[0], pts[1], pts[2], color)
+            draw_list.add_triangle(pts[0], pts[1], pts[2], col_edge, 1.0)
         elif len(pts) == 4:
             draw_list.add_quad_filled(pts[0], pts[1], pts[2], pts[3], color)
+            draw_list.add_quad(pts[0], pts[1], pts[2], pts[3], col_edge, 1.0)
         else:
             for t in range(1, len(pts) - 1):
                 draw_list.add_triangle_filled(pts[0], pts[t], pts[t + 1], color)
+                draw_list.add_triangle(pts[0], pts[t], pts[t + 1], col_edge, 1.0)
 
     now = time.time()
     dt = now - g_state.last_anim_time
     g_state.last_anim_time = now
+
 
     for idx, (mx, my, mz, spin_dir, name) in enumerate(motor_coords):
         pwm = g_state.motor_pwm[idx]
@@ -560,7 +656,8 @@ def render_world_class_pfd(draw_list, pos, size):
     col_frame_bg = imgui.color_convert_float4_to_u32(imgui.ImVec4(0.06, 0.08, 0.12, 1.0))
     col_bezel = imgui.color_convert_float4_to_u32(imgui.ImVec4(0.20, 0.28, 0.38, 1.0))
     draw_list.add_rect_filled(pos, imgui.ImVec2(pos.x + size.x, pos.y + size.y), col_frame_bg, 6.0)
-    draw_list.add_rect(pos, imgui.ImVec2(pos.x + size.x, pos.y + size.y), col_bezel, 6.0, 0, 1.5)
+    draw_list.add_rect(pos, imgui.ImVec2(pos.x + size.x, pos.y + size.y), col_bezel, 6.0, 1.5)
+
 
     pfd_radius = min(size.x, size.y) * 0.42
     col_ground = imgui.color_convert_float4_to_u32(imgui.ImVec4(0.38, 0.24, 0.14, 1.0))
@@ -744,7 +841,7 @@ def gui_render():
             imgui.text_colored(imgui.ImVec4(1.0, 0.85, 0.2, 1.0), "STEP-BY-STEP AIRFRAME & HARDWARE COMMISSIONING WIZARD")
             imgui.separator()
 
-            stages = ["1. Airframe", "2. Radio & RC", "3. LED/Buzzer", "4. Motor Spin", "5. Arm Switch", "6. Flash Save"]
+            stages = ["1. Airframe", "2. Radio & RC", "3. Sensors & Lidar", "4. LED/Buzzer", "5. Motor Spin", "6. Arm Switch", "7. Flash Save"]
             for idx, st_name in enumerate(stages):
                 is_active = (g_state.wizard_step == (idx + 1))
                 color = imgui.ImVec4(0.2, 0.9, 0.3, 1.0) if is_active else imgui.ImVec4(0.5, 0.5, 0.5, 1.0)
@@ -770,20 +867,38 @@ def gui_render():
                 changed, g_state.channel_map_idx = imgui.combo("Channel Order", g_state.channel_map_idx, channel_maps)
                 if imgui.button("<- Back", imgui.ImVec2(100, 35)): g_state.wizard_step = 1
                 imgui.same_line()
-                if imgui.button("Next: Hardware LED & Buzzer Test ->", imgui.ImVec2(280, 35)): g_state.wizard_step = 3
+                if imgui.button("Next: Sensors & Distance Sensors ->", imgui.ImVec2(280, 35)): g_state.wizard_step = 3
 
             elif g_state.wizard_step == 3:
-                imgui.text_colored(imgui.ImVec4(0.4, 0.8, 1.0, 1.0), "Stage 3: Physical Hardware LED & Buzzer Check")
+                imgui.text_colored(imgui.ImVec4(0.4, 0.8, 1.0, 1.0), "Stage 3: Sensors, GPS & Distance Sensor (Rangefinder / Lidar)")
+                rf_types = ["None / Disabled", "VL53L1X Time-of-Flight (I2C)", "Benewake TFmini / TFmini Plus (UART)", "US-42 Sonar", "MSP Rangefinder", "Fake / SITL Rangefinder"]
+                changed, g_state.rangefinder_type_idx = imgui.combo("Distance Sensor (Lidar)", g_state.rangefinder_type_idx, rf_types)
+
+                gps_protocols = ["U-Blox UBX (Auto-Baud 115200)", "NMEA Standard (38400)", "Fake / SITL GPS"]
+                changed, g_state.gps_protocol_idx = imgui.combo("GPS Engine", g_state.gps_protocol_idx, gps_protocols)
+
+                imgui.separator()
+                if imgui.button("Calibrate Accel (Level Ground)", imgui.ImVec2(240, 35)):
+                    g_state.send_msp(MSP_ACC_CALIBRATION)
+                    g_state.status_msg = "Accelerometer calibrated successfully!"
+
+                imgui.separator()
+                if imgui.button("<- Back", imgui.ImVec2(100, 35)): g_state.wizard_step = 2
+                imgui.same_line()
+                if imgui.button("Next: Hardware LED & Buzzer Test ->", imgui.ImVec2(280, 35)): g_state.wizard_step = 4
+
+            elif g_state.wizard_step == 4:
+                imgui.text_colored(imgui.ImVec4(0.4, 0.8, 1.0, 1.0), "Stage 4: Physical Hardware LED & Buzzer Check")
                 if imgui.button("Toggle Status LED", imgui.ImVec2(220, 35)): g_state.led_state = not g_state.led_state
                 imgui.same_line()
                 if imgui.button("Beep Buzzer (3-Beep Test)", imgui.ImVec2(220, 35)): g_state.buzzer_state = True
                 imgui.separator()
-                if imgui.button("<- Back", imgui.ImVec2(100, 35)): g_state.wizard_step = 2
+                if imgui.button("<- Back", imgui.ImVec2(100, 35)): g_state.wizard_step = 3
                 imgui.same_line()
-                if imgui.button("Next: Motor Direction & Spin Test ->", imgui.ImVec2(280, 35)): g_state.wizard_step = 4
+                if imgui.button("Next: Motor Direction & Spin Test ->", imgui.ImVec2(280, 35)): g_state.wizard_step = 5
 
-            elif g_state.wizard_step == 4:
-                imgui.text_colored(imgui.ImVec4(1.0, 0.3, 0.3, 1.0), "Stage 4: Motor Spin Direction & ESC Sequencer")
+            elif g_state.wizard_step == 5:
+                imgui.text_colored(imgui.ImVec4(1.0, 0.3, 0.3, 1.0), "Stage 5: Motor Spin Direction & ESC Sequencer")
                 imgui.text("CRITICAL: ALL PROPELLERS MUST BE COMPLETELY REMOVED!")
                 _, g_state.props_removed_confirmed = imgui.checkbox("I CONFIRM ALL PROPELLERS ARE REMOVED", g_state.props_removed_confirmed)
                 if g_state.props_removed_confirmed:
@@ -797,22 +912,24 @@ def gui_render():
                     imgui.separator()
                     if imgui.button("STOP ALL MOTORS", imgui.ImVec2(200, 35)): g_state.stop_all_motors()
                 imgui.separator()
-                if imgui.button("<- Back", imgui.ImVec2(100, 35)): g_state.wizard_step = 3
-                imgui.same_line()
-                if imgui.button("Next: Arming Switch ->", imgui.ImVec2(220, 35)): g_state.wizard_step = 5
-
-            elif g_state.wizard_step == 5:
-                imgui.text_colored(imgui.ImVec4(0.4, 0.8, 1.0, 1.0), "Stage 5: Arming Switch Configuration")
-                arm_switches = ["AUX 1 (Channel 5)", "AUX 2 (Channel 6)", "AUX 3 (Channel 7)", "AUX 4 (Channel 8)"]
-                changed, g_state.arm_switch_idx = imgui.combo("Arming Channel", g_state.arm_switch_idx, arm_switches)
                 if imgui.button("<- Back", imgui.ImVec2(100, 35)): g_state.wizard_step = 4
                 imgui.same_line()
-                if imgui.button("Next: Save & Complete Commissioning ->", imgui.ImVec2(300, 35)): g_state.wizard_step = 6
+                if imgui.button("Next: Arming Switch ->", imgui.ImVec2(220, 35)): g_state.wizard_step = 6
 
             elif g_state.wizard_step == 6:
-                imgui.text_colored(imgui.ImVec4(0.2, 0.9, 0.3, 1.0), "Stage 6: Save Configuration to Flash")
+                imgui.text_colored(imgui.ImVec4(0.4, 0.8, 1.0, 1.0), "Stage 6: Arming Switch Configuration")
+                arm_switches = ["AUX 1 (Channel 5)", "AUX 2 (Channel 6)", "AUX 3 (Channel 7)", "AUX 4 (Channel 8)"]
+                changed, g_state.arm_switch_idx = imgui.combo("Arming Channel", g_state.arm_switch_idx, arm_switches)
+                if imgui.button("<- Back", imgui.ImVec2(100, 35)): g_state.wizard_step = 5
+                imgui.same_line()
+                if imgui.button("Next: Save & Complete Commissioning ->", imgui.ImVec2(300, 35)): g_state.wizard_step = 7
+
+            elif g_state.wizard_step == 7:
+                imgui.text_colored(imgui.ImVec4(0.2, 0.9, 0.3, 1.0), "Stage 7: Save Configuration to Flash")
                 if imgui.button("Commit All Settings to Flash (0x1F0000)", imgui.ImVec2(380, 45)):
                     g_state.send_msp(MSP_EEPROM_WRITE)
+                    g_state.status_msg = "Configuration permanently saved to Flash memory sector 0x1F0000!"
+
                     g_state.status_msg = "Configuration permanently saved to Flash memory sector 0x1F0000!"
 
             imgui.end_tab_item()
@@ -821,17 +938,59 @@ def gui_render():
         # TAB 3: MAGNETOMETER / COMPASS CALIBRATION
         # =============================================================
         if imgui.begin_tab_item("Compass Calibration (3D Scatter)")[0]:
-            imgui.text_colored(imgui.ImVec4(1.0, 0.8, 0.2, 1.0), "3D Magnetometer / Compass Ellipsoid Calibration Suite")
+            imgui.text_colored(imgui.ImVec4(1.0, 0.85, 0.2, 1.0), "3D MAGNETOMETER / COMPASS FULL-SPHERE CALIBRATION WIZARD")
+            imgui.separator()
+
+            TARGET_SECTOR_PTS = 15
+            total_pts = sum(min(count, TARGET_SECTOR_PTS) for count in g_state.mag_sectors.values())
+            coverage_pct = (total_pts / (len(g_state.mag_sectors) * TARGET_SECTOR_PTS)) * 100.0
+
+            # Dynamic Directional Guidance Banner
+            if g_state.mag_cal_active:
+                # Determine next required orientation
+                if g_state.mag_sectors["Level Flat (Yaw 360°)"] < TARGET_SECTOR_PTS:
+                    guide_msg = "👉 [STEP 1/6] ROTATE FLAT: Spin craft 360° horizontally on table (Yaw axis)"
+                    guide_color = imgui.ImVec4(0.0, 0.9, 1.0, 1.0)
+                elif g_state.mag_sectors["Nose DOWN (Floor)"] < TARGET_SECTOR_PTS:
+                    guide_msg = "👉 [STEP 2/6] PITCH NOSE DOWN: Point camera straight at the floor and rotate 360°"
+                    guide_color = imgui.ImVec4(1.0, 0.75, 0.1, 1.0)
+                elif g_state.mag_sectors["Nose UP (Ceiling)"] < TARGET_SECTOR_PTS:
+                    guide_msg = "👉 [STEP 3/6] PITCH NOSE UP: Point camera straight at the ceiling and rotate 360°"
+                    guide_color = imgui.ImVec4(1.0, 0.75, 0.1, 1.0)
+                elif g_state.mag_sectors["Left Wing DOWN"] < TARGET_SECTOR_PTS:
+                    guide_msg = "👉 [STEP 4/6] ROLL LEFT: Point left wing down toward the floor and rotate"
+                    guide_color = imgui.ImVec4(0.3, 0.85, 1.0, 1.0)
+                elif g_state.mag_sectors["Right Wing DOWN"] < TARGET_SECTOR_PTS:
+                    guide_msg = "👉 [STEP 5/6] ROLL RIGHT: Point right wing down toward the floor and rotate"
+                    guide_color = imgui.ImVec4(0.3, 0.85, 1.0, 1.0)
+                elif g_state.mag_sectors["Inverted (Upside Down)"] < TARGET_SECTOR_PTS:
+                    guide_msg = "👉 [STEP 6/6] INVERTED: Turn craft completely upside-down and spin 360°"
+                    guide_color = imgui.ImVec4(1.0, 0.4, 0.8, 1.0)
+                else:
+                    guide_msg = "🌟 [COMPLETE] FULL 3D SPHERE FILLED 100%! Hold steady to finalize..."
+                    guide_color = imgui.ImVec4(0.2, 1.0, 0.4, 1.0)
+
+                imgui.push_style_color(imgui.Col_.text, guide_color)
+                imgui.text_wrapped(f">> {guide_msg}")
+                imgui.pop_style_color()
+            else:
+                imgui.text_colored(imgui.ImVec4(0.7, 0.8, 0.9, 1.0), "Click 'Start 30s 3D Compass Calibration' and follow the real-time rotational prompts below.")
+
+            imgui.separator()
             imgui.columns(2, "mag_cols", True)
 
+            # Left Column: Calibration controls, sector checklist, and offset report
             if not g_state.mag_cal_active:
-                if imgui.button("Start 25s 3D Compass Calibration", imgui.ImVec2(280, 40)):
+                if imgui.button("Start 30s 3D Compass Calibration", imgui.ImVec2(320, 40)):
                     g_state.start_mag_calibration()
             else:
                 elapsed = time.time() - g_state.mag_cal_start_time
                 remaining = max(0.0, g_state.mag_cal_duration - elapsed)
-                imgui.text_colored(imgui.ImVec4(0.2, 0.9, 0.3, 1.0), f"CALIBRATION ACTIVE: {remaining:4.1f}s")
-                imgui.progress_bar(elapsed / g_state.mag_cal_duration, imgui.ImVec2(280, 0))
+                imgui.text_colored(imgui.ImVec4(0.2, 0.9, 0.3, 1.0), f"CALIBRATION TIME REMAINING: {remaining:4.1f}s")
+                imgui.progress_bar(elapsed / g_state.mag_cal_duration, imgui.ImVec2(320, 0))
+
+                imgui.text(f"Overall 3D Sphere Coverage: {coverage_pct:5.1f}%")
+                imgui.progress_bar(coverage_pct / 100.0, imgui.ImVec2(320, 0))
 
                 if remaining <= 0.0:
                     g_state.mag_cal_active = False
@@ -847,25 +1006,47 @@ def gui_render():
                         g_state.mag_scale = [avg_d / dx, avg_d / dy, avg_d / dz]
                         g_state.status_msg = f"Compass Calibration Succeeded! Offsets: [{bx:.0f}, {by:.0f}, {bz:.0f}]"
 
-            imgui.text(f"Offset X: {g_state.mag_offset[0]:+6.1f} | Scale X: {g_state.mag_scale[0]:5.3f}")
-            imgui.text(f"Offset Y: {g_state.mag_offset[1]:+6.1f} | Scale Y: {g_state.mag_scale[1]:5.3f}")
-            imgui.text(f"Offset Z: {g_state.mag_offset[2]:+6.1f} | Scale Z: {g_state.mag_scale[2]:5.3f}")
+            imgui.separator()
+            imgui.text_colored(imgui.ImVec4(1.0, 0.85, 0.2, 1.0), "3D ORIENTATION SECTOR STATUS:")
+            for s_name, count in g_state.mag_sectors.items():
+                is_filled = (count >= TARGET_SECTOR_PTS)
+                tag = "[✓] COMPLETE" if is_filled else f"[ ] NEED DATA ({count}/{TARGET_SECTOR_PTS})"
+                tag_color = imgui.ImVec4(0.2, 0.9, 0.3, 1.0) if is_filled else (
+                    imgui.ImVec4(1.0, 0.6, 0.1, 1.0) if g_state.mag_cal_active else imgui.ImVec4(0.6, 0.6, 0.6, 1.0)
+                )
+                imgui.text_colored(tag_color, f"{tag:24s} : {s_name}")
 
-            if imgui.button("Save Offsets to Flash", imgui.ImVec2(280, 30)):
+            imgui.separator()
+            imgui.text(f"Calculated Hard-Iron Offsets: [{g_state.mag_offset[0]:+6.1f}, {g_state.mag_offset[1]:+6.1f}, {g_state.mag_offset[2]:+6.1f}]")
+            imgui.text(f"Calculated Soft-Iron Scale:   [{g_state.mag_scale[0]:5.3f}, {g_state.mag_scale[1]:5.3f}, {g_state.mag_scale[2]:5.3f}]")
+
+            if imgui.button("Save Offsets to Flash Memory", imgui.ImVec2(320, 35)):
                 g_state.send_msp(MSP_EEPROM_WRITE)
+                g_state.status_msg = "Compass calibration matrix written to Flash memory sector 0x1F0000!"
 
             imgui.next_column()
 
-            if implot.begin_plot("Mag Field (X vs Y)", imgui.ImVec2(-1, 280)):
+            # Right Column: Dual Real-Time Scatter Plots (X-Y and X-Z)
+            if implot.begin_plot("Mag Ellipsoid (X vs Y Plane)", imgui.ImVec2(-1, 180)):
                 implot.setup_axes("Mag X (LSB)", "Mag Y (LSB)")
                 if len(g_state.mag_samples_x) > 0:
                     xs = np.array(g_state.mag_samples_x, dtype=np.float32)
                     ys = np.array(g_state.mag_samples_y, dtype=np.float32)
-                    implot.plot_scatter("Raw Samples", xs, ys, len(xs))
+                    implot.plot_scatter("Horizontal Samples", xs, ys)
                 implot.end_plot()
+
+            if implot.begin_plot("Mag Ellipsoid (X vs Z Plane)", imgui.ImVec2(-1, 180)):
+                implot.setup_axes("Mag X (LSB)", "Mag Z (LSB)")
+                if len(g_state.mag_samples_x) > 0:
+                    xs = np.array(g_state.mag_samples_x, dtype=np.float32)
+                    zs = np.array(g_state.mag_samples_z, dtype=np.float32)
+                    implot.plot_scatter("Vertical Samples", xs, zs)
+                implot.end_plot()
+
 
             imgui.columns(1)
             imgui.end_tab_item()
+
 
         # =============================================================
         # TAB 4: 6-POINT ACCELEROMETER CALIBRATION

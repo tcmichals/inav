@@ -43,6 +43,9 @@
 #include "sbus.hpp"
 #include "pico2_target.hpp"
 #include "gps_types.hpp"
+#include "rangefinder_base.hpp"
+#include "fake_sensors.hpp"
+
 #include "ubx_parser.hpp"
 #include "nmea_parser.hpp"
 #include "gps_driver.hpp"
@@ -335,6 +338,31 @@ void test_drivers_and_msp() {
     assert(prt_pkt.len == 28);
     assert(prt_pkt.data[0] == 0xB5 && prt_pkt.data[1] == 0x62);
 
+    // Test Distance Sensor / Rangefinder (INAV rangefinder.c median & tilt compensation)
+    drivers::RangefinderDriverBase rf{};
+    // Level attitude: raw 2.0m -> AGL 2.0m
+    auto rf_sample = rf.process(2.0f, 1.0f, 1.0f, 1000);
+    assert(rf_sample.valid);
+    assert(std::abs(rf_sample.calculated_agl_m - 2.0f) < 0.001f);
+
+    // Tilted 20 deg roll (cos=0.9397): slant range 2.128m -> vertical AGL 2.0m
+    float cos_20deg = std::cos(20.0f * (flight::PI_F / 180.0f));
+    auto rf_tilt = rf.process(2.0f / cos_20deg, cos_20deg, 1.0f, 2000);
+    assert(rf_tilt.valid);
+    assert(std::abs(rf_tilt.calculated_agl_m - 2.0f) < 0.01f);
+
+    // Test Unified Fake Sensor Harness
+    drivers::FakeSensorHarness fake_harness{};
+    auto fake_imu = fake_harness.update_imu(10.0f, 0.0f, 0.0f, 0.0f, 0.0f, 1.0f, 1.0f);
+    assert(fake_imu.accel_g[2] == 1.0f);
+    auto fake_gps = fake_harness.update_gps(50.0f, 50.0f, 25.0f, 5.0f, 5.0f, 0.0f);
+
+    assert(fake_gps.fix_3d);
+    assert(fake_gps.alt_m == 25.0f);
+    auto fake_rc = fake_harness.update_rc(1500, 1500, 1600, 1500, true, false);
+    assert(fake_rc.armed);
+    assert(fake_rc.channels[2] == 1600);
+
     // Test C++20 Templated Flight Engine Instantiation
     drivers::gps::GpsDriver gps_engine_drv{drivers::gps::GpsProvider::Ublox};
     target::TargetAdapter<target::pico2::Pico2Target> dummy_plat{target::pico2::Pico2Target{}};
@@ -349,6 +377,7 @@ void test_drivers_and_msp() {
 
     std::cout << "PASSED!\n";
 }
+
 
 void test_filters_and_kalman() {
     std::cout << "[TEST 10/10] Production PT1/PT2/PT3, Biquad & Gyro Kalman Filters... ";

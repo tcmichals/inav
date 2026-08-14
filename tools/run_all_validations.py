@@ -48,14 +48,24 @@ def main():
     if not run_step("Execute Submodule Native Differential Test", "cd build && ./submodule_differential_test"):
         sys.exit(1)
 
-    # 6. Execute Logic Analyzer Trace Validator
+    # 6. Execute Legacy Task Scheduler vs C++20 Coroutine Benchmark
+    if not run_step("Execute Task vs Coroutine Performance Benchmark", "cd build && ./scheduler_benchmark"):
+        sys.exit(1)
+
+    # 7. Execute Full-Stack 60-Second Autonomous Flight Mission Parity Test
+    if not run_step("Execute Full-Stack Mission Parity Test", "cd build && ./full_stack_parity_test"):
+        sys.exit(1)
+
+    # 8. Execute Logic Analyzer Trace Validator
     if not run_step("Execute Offline Logic Analyzer Trace Validator", "python3 tools/validate_logic_trace.py"):
         sys.exit(1)
 
-    # 7. Execute Live SITL 6-DOF & MSP Protocol Python Integration Test
+    # 9. Execute Live SITL 6-DOF & MSP Protocol Python Integration Test
     sitl_cmd = "./build/inav_abstractx_sitl >/dev/null 2>&1 & SITL_PID=$! && sleep 1 && python3 tools/test_sitl_integration.py; kill $SITL_PID 2>/dev/null"
     if not run_step("Execute Live SITL Python Integration Test", sitl_cmd):
         sys.exit(1)
+
+
 
     print("\n====================================================")
     print(" ALL SYSTEM VALIDATION PIPELINES PASSED 100%!")
