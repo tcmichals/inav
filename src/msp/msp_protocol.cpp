@@ -229,12 +229,32 @@ bool MspEngine::process_command(Cmd cmd,
             tx_frame.push_u8(6);   // HEADING HOLD
             return true;
 
+        case Cmd::AccCalibration:
+            // Acknowledge accelerometer level calibration
+            return true;
+
+        case Cmd::MagCalibration:
+            // Acknowledge compass calibration mode
+            return true;
+
+        case Cmd::SetMotor:
+            if (rx_payload.size() >= 8) {
+                // Parse 8x uint16_t motor pulse overrides for bench test
+                for (size_t i = 0; i < rx_payload.size() / 2 && i < 8; ++i) {
+                    uint16_t pwm = static_cast<uint16_t>(rx_payload[i * 2] | (rx_payload[i * 2 + 1] << 8));
+                    const_cast<MspLiveState&>(live).motor_us[i] = pwm;
+                }
+                return true;
+            }
+            return false;
+
         case Cmd::EepromWrite:
             return ConfigRegistry::save_to_file("config.bin");
 
         case Cmd::Reboot:
             // In SITL, reboot is a no-op (just acknowledge)
             return true;
+
 
         // ---- Navigation ----
 

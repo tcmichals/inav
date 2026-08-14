@@ -58,12 +58,16 @@ enum class Cmd : uint16_t {
     Uid          = 160,
 
     // Write Commands
-    SetRawRc     = 200,
-    SetRawGps    = 201,
-    SetPid       = 202,
-    SetMisc      = 207,
-    Set4WayIf    = 245,
-    EepromWrite  = 250,
+    SetRawRc       = 200,
+    SetRawGps      = 201,
+    SetPid         = 202,
+    AccCalibration = 205,
+    MagCalibration = 206,
+    SetMisc        = 207,
+    SetMotor       = 214,
+    Set4WayIf      = 245,
+    EepromWrite    = 250,
+
 
     // System
     Reboot       = 68,
