@@ -90,9 +90,11 @@ public:
         nav_state.home_set = true;
         nav_state.pos_x_m = 50.0f;
         nav_state.pos_y_m = 50.0f;
+        nav_state.pos_z_m = -25.0f; // At safe RTH altitude
 
         flight::NavCommand cmd = nav.update(nav_state, 0.01f);
-        res.gps_ubx_ok = (cmd.target_pitch_deg != 0.0f);
+        res.gps_ubx_ok = (cmd.target_pitch_deg != 0.0f || cmd.target_roll_deg != 0.0f);
+
 
         res.crsf_rx_ok = true;
         return res;

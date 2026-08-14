@@ -39,7 +39,7 @@ public:
         sample.sensor_type = chip;
         sample.timestamp_ns = tlp.wire.timestamp_ns;
 
-        const uint8_t* p = tlp.wire.payload.data();
+        const uint8_t* p = tlp.wire.payload;
 
         int16_t raw_mx = static_cast<int16_t>((p[0] << 8) | p[1]);
         int16_t raw_my = static_cast<int16_t>((p[2] << 8) | p[3]);

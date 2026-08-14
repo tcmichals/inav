@@ -1,12 +1,20 @@
 /*
  * Copyright (C) 2026 Tim Michals
+ * Copyright (C) 2015-2026 INAV Contributors (Konstantin Sharlaimov, et al.)
+ * Copyright (C) 2014-2016 Cleanflight Contributors (Dominic Clifton, et al.)
+ *
  * SPDX-License-Identifier: GPL-3.0-or-later
  *
  * `tcmichals/inav` - iNav Configurator CLI Processor Engine
+ *
+ * Ported / derived from upstream reference C source files:
+ *   - Upstream INAV: src/main/cli/cli.c
+ *   - Upstream Cleanflight: src/main/cli/cli.c
  */
 
 #ifndef CLI_ENGINE_HPP
 #define CLI_ENGINE_HPP
+
 
 #include "config_registry.hpp"
 #include <string_view>

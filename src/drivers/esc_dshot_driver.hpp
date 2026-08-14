@@ -1,12 +1,20 @@
 /*
  * Copyright (C) 2026 Tim Michals
+ * Copyright (C) 2016-2026 Betaflight Contributors (BorisB, et al.)
+ * Copyright (C) 2016-2026 INAV Contributors (Konstantin Sharlaimov, et al.)
+ *
  * SPDX-License-Identifier: GPL-3.0-or-later
  *
  * `tcmichals/inav` - Comprehensive ESC Driver (DShot, OneShot, FastPWM, Standard PWM)
+ *
+ * Ported / derived from upstream reference C source files:
+ *   - Upstream Betaflight: src/main/drivers/pwm_output_dshot.c
+ *   - Upstream INAV: src/main/drivers/pwm_output_dshot.c
  */
 
 #ifndef ESC_DSHOT_DRIVER_HPP
 #define ESC_DSHOT_DRIVER_HPP
+
 
 #include "asp_tlp64.hpp"
 #include "pcie_bar_map.hpp"

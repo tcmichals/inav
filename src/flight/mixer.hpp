@@ -1,12 +1,21 @@
 /*
  * Copyright (C) 2026 Tim Michals
+ * Copyright (C) 2015-2026 INAV Contributors (Konstantin Sharlaimov, et al.)
+ * Copyright (C) 2015-2026 Betaflight Contributors (BorisB, et al.)
+ * Copyright (C) 2014-2016 Cleanflight Contributors (Dominic Clifton, et al.)
+ *
  * SPDX-License-Identifier: GPL-3.0-or-later
  *
  * `tcmichals/inav` - Comprehensive C++20 Airframe Presets (Copters, Fixed-Wing, VTOL, Tricopters)
+ *
+ * Ported / derived from upstream reference C source files:
+ *   - Upstream INAV: src/main/flight/mixer.c
+ *   - Upstream Betaflight: src/main/flight/mixer.c
  */
 
 #ifndef FLIGHT_MIXER_HPP
 #define FLIGHT_MIXER_HPP
+
 
 #include "pid.hpp"
 #include <cstdint>

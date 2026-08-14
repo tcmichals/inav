@@ -10,6 +10,7 @@
 
 #include "asp_tlp64.hpp"
 #include <cstdint>
+#include <cmath>
 
 namespace abstractx::drivers {
 
@@ -40,7 +41,7 @@ public:
         sample.sensor_type = chip;
         sample.timestamp_ns = tlp.wire.timestamp_ns;
 
-        const uint8_t* p = tlp.wire.payload.data();
+        const uint8_t* p = tlp.wire.payload;
 
         // Unpack raw 24-bit pressure & 24-bit temperature
         uint32_t raw_press = (static_cast<uint32_t>(p[0]) << 16) | (static_cast<uint32_t>(p[1]) << 8) | p[2];

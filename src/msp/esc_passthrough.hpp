@@ -1,12 +1,21 @@
 /*
  * Copyright (C) 2026 Tim Michals
+ * Copyright (C) 2016-2026 Betaflight Contributors (BorisB, et al.)
+ * Copyright (C) 2016-2026 INAV Contributors (Konstantin Sharlaimov, et al.)
+ * Copyright (C) 2014-2016 Cleanflight Contributors (Dominic Clifton, et al.)
+ *
  * SPDX-License-Identifier: GPL-3.0-or-later
  *
  * `tcmichals/inav` - 4way-interface BLHeli / AM32 ESC Passthrough Engine
+ *
+ * Ported / derived from upstream reference C source files:
+ *   - Upstream Betaflight: src/main/drivers/serial_4way.c
+ *   - Upstream INAV: src/main/drivers/serial_4way.c
  */
 
 #ifndef ESC_PASSTHROUGH_HPP
 #define ESC_PASSTHROUGH_HPP
+
 
 #include "asp_tlp64.hpp"
 #include <cstdint>

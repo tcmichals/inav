@@ -1,0 +1,28 @@
+{
+    "version": "2.0.0",
+    "tasks": [
+        {
+            "label": "Build inav_sitl_debug",
+            "type": "shell",
+            "command": "cmake -B build -DCMAKE_BUILD_TYPE=Debug && cmake --build build --target inav_sitl_debug",
+            "options": {
+                "cwd": "${workspaceFolder}"
+            },
+            "group": {
+                "kind": "build",
+                "isDefault": true
+            },
+            "problemMatcher": "$gcc"
+        },
+        {
+            "label": "Build run_unit_tests",
+            "type": "shell",
+            "command": "cmake -B build -DCMAKE_BUILD_TYPE=Debug && cmake --build build --target run_unit_tests",
+            "options": {
+                "cwd": "${workspaceFolder}"
+            },
+            "group": "build",
+            "problemMatcher": "$gcc"
+        }
+    ]
+}

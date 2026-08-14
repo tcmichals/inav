@@ -2,49 +2,82 @@
  * Copyright (C) 2026 Tim Michals
  * SPDX-License-Identifier: GPL-3.0-or-later
  *
- * `tcmichals/inav` - Configurable MSP Serial & TCP Server Header
+ * `tcmichals/inav` - MSP Server — Templated on MspTransport Concept
+ *
+ * Portable server logic. The transport (Boost.Asio or lwIP) is injected
+ * via the template parameter. Zero #ifdefs in protocol handling.
  */
 
 #ifndef MSP_SERVER_HPP
 #define MSP_SERVER_HPP
 
 #include "msp_protocol.hpp"
+#include "msp_transport.hpp"
 #include <cstdint>
-#include <array>
-#include <span>
 
 namespace abstractx::msp {
 
-enum class TransportMode : uint8_t {
-    Disabled = 0,
-    Serial   = 1,
-    Tcp      = 2,
-    Both     = 3
-};
-
-struct MspServerConfig {
-    TransportMode mode{TransportMode::Tcp};
-    uint16_t tcp_port{5760}; // Default iNav Configurator SITL TCP port
-    uint32_t serial_baud{115200};
-};
-
+template <MspTransport Transport>
 class MspServer {
 public:
-    explicit MspServer(const MspServerConfig& config = {}) noexcept : config_(config) {}
+    explicit MspServer(uint16_t port = 5760) noexcept : port_(port) {
+        // Wire transport's byte callback into our parser
+        transport_.set_on_bytes_received(
+            [this](std::span<const uint8_t> data) {
+                on_bytes_received(data);
+            });
+    }
 
-    bool start() noexcept;
-    void stop() noexcept;
-    void poll() noexcept;
+    bool start() noexcept {
+        return transport_.start(port_);
+    }
 
-    bool is_running() const noexcept { return running_; }
+    void stop() noexcept {
+        transport_.stop();
+    }
+
+    // Non-blocking poll — call from flight loop each tick
+    void poll() noexcept {
+        transport_.poll();
+    }
+
+    bool is_running() const noexcept {
+        return transport_.has_client();
+    }
+
+    // Update live state reference — called by flight loop with current EKF3/sensor data
+    void update_live_state(const MspLiveState& state) noexcept {
+        live_state_ = state;
+    }
+
+    Transport& transport() noexcept { return transport_; }
 
 private:
-    MspServerConfig config_{};
-    bool running_{false};
-    int server_fd_{-1};
-    int client_fd_{-1};
+    Transport transport_;
+    MspV2FrameParser parser_;
+    MspLiveState live_state_;
+    uint16_t port_;
 
-    void process_incoming_stream(const uint8_t* data, size_t len) noexcept;
+    void on_bytes_received(std::span<const uint8_t> data) noexcept {
+        parser_.feed(data);
+
+        while (auto parsed = parser_.next_frame()) {
+            MspFrame response{};
+            Cmd cmd = static_cast<Cmd>(parsed->command);
+
+            if (MspEngine::process_command(cmd, parsed->payload_span(), response, live_state_)) {
+                // Serialize response in same protocol version as request
+                if (parsed->is_v2) {
+                    auto wire = MspFrameSerializer::serialize_v2(response);
+                    transport_.send(std::span<const uint8_t>(wire.data.data(), wire.len));
+                } else {
+                    auto wire = MspFrameSerializer::serialize_v1(response);
+                    transport_.send(std::span<const uint8_t>(wire.data.data(), wire.len));
+                }
+            }
+            // Unknown commands are silently dropped (per MSP spec)
+        }
+    }
 };
 
 } // namespace abstractx::msp

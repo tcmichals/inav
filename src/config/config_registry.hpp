@@ -1,12 +1,19 @@
 /*
  * Copyright (C) 2026 Tim Michals
+ * Copyright (C) 2015-2026 INAV Contributors (Konstantin Sharlaimov, et al.)
+ * Copyright (C) 2014-2016 Cleanflight Contributors (Dominic Clifton, et al.)
+ *
  * SPDX-License-Identifier: GPL-3.0-or-later
  *
  * `tcmichals/inav` - Bare-Metal Safe C++20 Configuration Registry & Flash Abstraction
+ *
+ * Ported / derived from upstream reference C source files:
+ *   - Upstream INAV: src/main/config/config.c, src/main/config/parameter_group.c
  */
 
 #ifndef CONFIG_REGISTRY_HPP
 #define CONFIG_REGISTRY_HPP
+
 
 #include "flash_storage.hpp"
 #include <cstdint>
@@ -42,6 +49,13 @@ struct NavConfig {
     uint8_t  user_control_mode{0};     // Angle / Horizon / NavHold
 };
 
+// Strongly typed Mixer Settings
+struct MixerConfig {
+    uint8_t  mixer_mode{0};             // 0=QuadX, 1=QuadP, 2=HexX, 3=OctoX, 4=FixedWing
+    uint8_t  reverse_motors{0};         // 0=Normal (Props In), 1=Reversed (Props Out)
+    uint16_t yaw_jump_prevention{400};  // Yaw jump prevention limit
+};
+
 // Master Configuration Container (Contiguous POD struct, Zero Linker Scripts)
 struct alignas(64) MasterConfig {
     uint32_t magic{0x41535043}; // "ASPC" (AbstractX Flight Config)
@@ -51,6 +65,7 @@ struct alignas(64) MasterConfig {
     PidConfig   pid{};
     MotorConfig motor{};
     NavConfig   nav{};
+    MixerConfig mixer{};
 };
 
 // Configuration Registry Engine with Bare-Metal Safe Flash Storage API

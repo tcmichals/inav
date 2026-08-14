@@ -1,12 +1,21 @@
 /*
  * Copyright (C) 2026 Tim Michals
+ * Copyright (C) 2015-2026 Betaflight Contributors (BorisB, et al.)
+ * Copyright (C) 2015-2026 INAV Contributors (Konstantin Sharlaimov, et al.)
+ * Copyright (C) 2014-2016 Cleanflight Contributors (Dominic Clifton, et al.)
+ *
  * SPDX-License-Identifier: GPL-3.0-or-later
  *
  * `tcmichals/inav` - Multi-Protocol RC Receiver Driver (CRSF, SBUS, IBUS, SRXL2, PWM/PPM)
+ *
+ * Ported / derived from upstream reference C source files:
+ *   - Upstream Betaflight: src/main/rx/crsf.c, src/main/rx/sbus.c
+ *   - Upstream INAV: src/main/rx/crsf.c, src/main/rx/sbus.c
  */
 
 #ifndef RC_DRIVER_HPP
 #define RC_DRIVER_HPP
+
 
 #include "asp_tlp64.hpp"
 #include <cstdint>
