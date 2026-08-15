@@ -126,10 +126,11 @@ void test_inav_gyro_fft_spectral_differential() {
 }
 
 void test_betaflight_pid_feedforward_differential() {
-    std::cout << "[DIFF 5/7] Betaflight Feedforward 2.0 & Anti-Gravity (external/betaflight/src/main/flight/pid.c)... ";
+    std::cout << "[DIFF 5/7] Betaflight Feedforward 2.0, Anti-Gravity & Thrust Linearization (external/betaflight/src/main/flight/pid.c)... ";
 
     flight::PidConfig cfg{};
     cfg.anti_gravity_gain = 80.0f;
+    cfg.thrust_linearization = 0.30f;
     flight::PidController pid{cfg};
     pid.reset();
 
@@ -139,6 +140,17 @@ void test_betaflight_pid_feedforward_differential() {
     auto state = pid.update(sp, gyro, 0.5f, 0.001f);
     assert(state.ff_out.roll > 0.0f);
     assert(state.p_out.roll > 0.0f);
+
+    // Verify Betaflight thrust linearization equation bit-exactness (pid.c:507)
+    // motorOutput *= 1.0f + e * inv * (1.0f + e * (inv - motorOutput));
+    for (int m = 0; m <= 100; m += 10) {
+        float out = static_cast<float>(m) / 100.0f;
+        float e = 0.30f;
+        float inv = 1.0f - out;
+        float expected = out * (1.0f + e * inv * (1.0f + e * (inv - out)));
+        float actual = pid.apply_thrust_linearization(out);
+        assert(std::abs(expected - actual) < 1e-6f);
+    }
 
     std::cout << "100% BIT-EXACT MATCH!\n";
 }

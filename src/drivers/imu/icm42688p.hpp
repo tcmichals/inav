@@ -172,10 +172,11 @@ public:
         (void)co_await bus_.async_write_reg(B2_ACCEL_CONFIG_STATIC4,
             static_cast<uint8_t>((AAF_BITSHIFT << 4u) | AAF_DELTSQR_H));
 
-        // Stage 9: Bank 0 — INT1 config
+        // Stage 9: Bank 0 — INT1 config & clear on status burst read (fc_init / accgyro_icm42605.c)
         (void)co_await bus_.async_write_reg(REG_BANK_SEL, 0x00u);
-        (void)co_await bus_.async_write_reg(REG_INT_CONFIG, 0x02u);
-        (void)co_await bus_.async_write_reg(REG_INT_CONFIG1, 0x00u);
+        (void)co_await bus_.async_write_reg(REG_INT_CONFIG, static_cast<uint8_t>(INT1_DRIVE_PP | INT1_POLARITY_HIGH | INT1_MODE_PULSED));
+        (void)co_await bus_.async_write_reg(REG_INT_CONFIG0, 0x00u); // Clear UI DRDY int on sensor register read
+        (void)co_await bus_.async_write_reg(REG_INT_CONFIG1, static_cast<uint8_t>(INT_TPULSE_8US | INT_TDEASSERT_DISABLED));
 
         // Stage 10: Bank 0 — route DATA_RDY interrupt to INT1
         (void)co_await bus_.async_write_reg(REG_INT_SOURCE0, UI_DRDY_INT1_EN);

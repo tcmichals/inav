@@ -102,9 +102,13 @@ struct PidConfig {
     float dterm_notch_hz{0.0f}; // 0.0 = disabled
     float dterm_notch_q{1.0f};
 
+    // Thrust Linearization Settings (Betaflight pidApplyThrustLinearization)
+    float thrust_linearization{0.0f}; // 0.0 = disabled, 0.20-0.40 typical
+
     // Level / Angle Mode Outer-Loop Settings
     float level_kp{5.0f};            // Outer-loop attitude error gain
     float max_angle_rate_dps{300.0f}; // Maximum rate setpoint in level mode (deg/s)
+    float angle_earth_ref{1.0f};     // Earth-reference turn coordination gain
 };
 
 class PidController {
@@ -141,19 +145,46 @@ public:
 
     // -------------------------------------------------------------------------
     // Angle Mode Outer-Loop: Computes rate setpoints from angle error
+    // with Betaflight / INAV Earth-Reference Yaw Coordination (pidLevel)
     // -------------------------------------------------------------------------
     [[nodiscard]] Axis3f calculate_angle_mode_rates(
         const Axis3f& target_angles_deg,
-        const Axis3f& current_angles_deg) const noexcept {
+        const Axis3f& current_angles_deg,
+        float target_yaw_rate_dps = 0.0f) const noexcept {
         Axis3f rate_setpoints{};
 
         for (size_t axis = 0; axis < 2; ++axis) { // Roll and Pitch only
             const float angle_error = target_angles_deg[axis] - current_angles_deg[axis];
-            const float target_rate = angle_error * config_.level_kp;
+            float target_rate = angle_error * config_.level_kp;
+
+            // Earth-reference coordinated turn cross-coupling:
+            // roll rate is adjusted by pitch sin(pitch)*yaw_rate, pitch by -sin(roll)*yaw_rate
+            constexpr float DEG_TO_RAD = 0.017453292519943295f;
+            const float alt_angle_deg = (axis == 0) ? target_angles_deg.pitch : target_angles_deg.roll;
+            float sin_angle = std::sin(alt_angle_deg * DEG_TO_RAD);
+            if (axis == 0) sin_angle = -sin_angle; // Negative for Roll
+            target_rate += target_yaw_rate_dps * sin_angle * config_.angle_earth_ref;
+
             rate_setpoints[axis] = std::clamp(target_rate, -config_.max_angle_rate_dps, config_.max_angle_rate_dps);
         }
-        rate_setpoints.yaw = target_angles_deg.yaw; // Yaw is always rate controlled
+        rate_setpoints.yaw = (target_yaw_rate_dps != 0.0f) ? target_yaw_rate_dps : target_angles_deg.yaw;
         return rate_setpoints;
+    }
+
+    // -------------------------------------------------------------------------
+    // Thrust Linearization (Betaflight pid.c:507)
+    // -------------------------------------------------------------------------
+    [[nodiscard]] float apply_thrust_linearization(float motor_output) const noexcept {
+        const float e = config_.thrust_linearization;
+        if (e <= 0.0f) return motor_output;
+        const float inv = 1.0f - motor_output;
+        return motor_output * (1.0f + e * inv * (1.0f + e * (inv - motor_output)));
+    }
+
+    [[nodiscard]] float compensate_thrust_linearization(float throttle) const noexcept {
+        const float e = config_.thrust_linearization;
+        if (e <= 0.0f) return throttle;
+        return throttle * (1.0f - e * (1.0f - throttle));
     }
 
     // -------------------------------------------------------------------------
