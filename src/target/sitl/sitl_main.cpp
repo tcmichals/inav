@@ -14,7 +14,7 @@
 #include <thread>
 #include <chrono>
 
-#include "boost_asio_transport.hpp"
+#include "posix_tcp_transport.hpp"
 #include "coroutine_task.hpp"
 #include "asp_tlp64.hpp"
 #include "pcie_bar_map.hpp"
@@ -57,8 +57,8 @@ static flight::NavigationEngine g_nav_engine;
 static flight::Mixer<4> g_quad_mixer(flight::presets::QuadX);
 static flight::FailsafeEngine g_failsafe_engine;
 
-// Boost.Asio MSP Server & Blackbox Logger
-static msp::MspServer<msp::BoostAsioTransport> g_msp_server{5760};
+// POSIX TCP MSP Server & Blackbox Logger
+static msp::MspServer<msp::PosixTcpTransport> g_msp_server{5760};
 static logging::BlackboxLogger g_blackbox_logger;
 static msp::MspLiveState g_msp_live_state;
 
@@ -167,7 +167,7 @@ static Task<void> run_flight_loop() {
             update_msp_live_state();
             g_msp_server.update_live_state(g_msp_live_state);
 
-            g_logging_ring.push(tlp);
+            (void)g_logging_ring.push(tlp);
         }
 
         co_await YieldTick{};

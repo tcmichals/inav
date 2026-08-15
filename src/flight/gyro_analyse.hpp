@@ -68,8 +68,8 @@ public:
         min_frequency_hz_ = min_frequency_hz;
         target_looptime_us_ = target_looptime_us;
 
-        fft_sampling_rate_hz_ = static_cast<uint16_t>(1000000.0f / (target_looptime_us * FFT_SAMPLING_DENOMINATOR));
-        max_frequency_hz_ = fft_sampling_rate_hz_ / 2; // Nyquist limit
+        fft_sampling_rate_hz_ = static_cast<uint16_t>(1000000.0f / static_cast<float>(target_looptime_us * FFT_SAMPLING_DENOMINATOR));
+        max_frequency_hz_ = static_cast<uint16_t>(fft_sampling_rate_hz_ / 2u); // Nyquist limit
         fft_resolution_ = static_cast<float>(max_frequency_hz_) / DYN_NOTCH_BIN_COUNT;
 
         const int res_int = std::max(1, static_cast<int>(std::lrint(fft_resolution_)));
@@ -78,7 +78,7 @@ public:
         // Precompute Hanning Window (0.5 - 0.5 * cos(2 * pi * i / (N - 1)))
         constexpr float TWO_PI = 6.283185307179586f;
         for (size_t i = 0; i < DYN_NOTCH_WINDOW_SIZE; ++i) {
-            hanning_window_[i] = 0.5f - 0.5f * std::cos(TWO_PI * i / (DYN_NOTCH_WINDOW_SIZE - 1));
+            hanning_window_[i] = 0.5f - 0.5f * std::cos(TWO_PI * static_cast<float>(i) / static_cast<float>(DYN_NOTCH_WINDOW_SIZE - 1));
         }
 
         // Initialize 25Hz PT1 Frequency Smoothing Filters
@@ -122,7 +122,7 @@ public:
             circular_buffer_idx_ = (circular_buffer_idx_ + 1) % DYN_NOTCH_WINDOW_SIZE;
         }
 
-        sampling_index_ = (sampling_index_ + 1) % FFT_SAMPLING_DENOMINATOR;
+        sampling_index_ = static_cast<uint8_t>((sampling_index_ + 1u) % FFT_SAMPLING_DENOMINATOR);
 
         // Run 4-stage update cycle
         run_state_machine_step();
@@ -269,7 +269,7 @@ private:
 
         // Cooley-Tukey butterfly stages
         for (size_t len = 2; len <= N; len <<= 1) {
-            const float angle = -6.283185307179586f / len;
+            const float angle = -6.283185307179586f / static_cast<float>(len);
             const float w_len_re = std::cos(angle);
             const float w_len_im = std::sin(angle);
 

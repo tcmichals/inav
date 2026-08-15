@@ -110,8 +110,7 @@ public:
             imu_tlp.wire.payload[9] = static_cast<uint8_t>(raw_gy & 0xFF);
             imu_tlp.wire.payload[10]= static_cast<uint8_t>(raw_gz >> 8);
             imu_tlp.wire.payload[11]= static_cast<uint8_t>(raw_gz & 0xFF);
-
-            telemetry_ring.push(imu_tlp);
+            (void)telemetry_ring.push(imu_tlp);
         }
     }
 

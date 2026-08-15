@@ -166,10 +166,8 @@ public:
                 PidState pid_out = pid_controller_.update(target_rates, notch_filtered_gyro, 0.5f, 0.001f);
 
                 // 7. Motor Mixing & DShot Telemetry Output (INAV mixer.c)
-                auto motors = quad_mixer_.mix(0.5f, pid_out);
-                (void)motors;
-
-                logging_ring.push(tlp);
+                (void)quad_mixer_.mix(0.5f, pid_out);
+                (void)logging_ring.push(tlp);
             }
 
             co_await YieldTick{};

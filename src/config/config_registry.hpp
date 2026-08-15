@@ -12,10 +12,12 @@
  */
 
 #ifndef CONFIG_REGISTRY_HPP
+// NOTE: bus pin config structs are in bus/bus_concepts.hpp — included below.
 #define CONFIG_REGISTRY_HPP
 
 
 #include "flash_storage.hpp"
+#include "bus_concepts.hpp"
 #include <cstdint>
 #include <cstddef>
 #include <array>
@@ -56,16 +58,58 @@ struct MixerConfig {
     uint16_t yaw_jump_prevention{400};  // Yaw jump prevention limit
 };
 
+// Sensor hardware selection
+enum class ImuChipSel : uint8_t {
+    Icm42688P = 0u,
+    Bmi088    = 1u,
+    Mpu6000   = 2u,
+};
+
+enum class BaroChipSel : uint8_t {
+    Bmp280 = 0u,
+    Dps310 = 1u,
+    Ms5611 = 2u,
+};
+
+enum class MagChipSel : uint8_t {
+    Qmc5883L = 0u,
+    Ist8310  = 1u,
+};
+
+// Sensor bus / chip configuration — loaded from flash on boot
+struct SensorConfig {
+    // IMU (SPI1)
+    drivers::bus::SpiPinConfig imu_spi{}; // defaults: GP10/11/12/13/14, 24 MHz
+    ImuChipSel  imu_chip{ImuChipSel::Icm42688P};
+    uint32_t    imu_odr_hz{8000u};
+    uint8_t     imu_accel_range_g{16u};
+    uint16_t    imu_gyro_range_dps{2000u};
+    bool        imu_enable_drdy{true};
+
+    // Barometer + Magnetometer (I2C1)
+    drivers::bus::I2cPinConfig baro_mag_i2c{}; // defaults: GP6/GP7, 400 kHz
+    BaroChipSel baro_chip{BaroChipSel::Bmp280};
+    uint8_t     baro_i2c_addr{0x76u}; // SDO=GND → 0x76
+    MagChipSel  mag_chip{MagChipSel::Qmc5883L};
+    uint8_t     mag_i2c_addr{0x0Du};  // QMC5883L default
+
+    // GPS (UART0)
+    uint8_t     gps_tx_pin{0u};       // GP0
+    uint8_t     gps_rx_pin{1u};       // GP1
+    uint32_t    gps_baud{115200u};
+};
+
 // Master Configuration Container (Contiguous POD struct, Zero Linker Scripts)
 struct alignas(64) MasterConfig {
     uint32_t magic{0x41535043}; // "ASPC" (AbstractX Flight Config)
     uint16_t version{1};
     uint16_t crc16{0};
 
-    PidConfig   pid{};
-    MotorConfig motor{};
-    NavConfig   nav{};
-    MixerConfig mixer{};
+    PidConfig    pid{};
+    MotorConfig  motor{};
+    NavConfig    nav{};
+    MixerConfig  mixer{};
+    SensorConfig sensor{};
 };
 
 // Configuration Registry Engine with Bare-Metal Safe Flash Storage API

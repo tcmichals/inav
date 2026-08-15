@@ -11,7 +11,7 @@
 #include "flight_engine_template.hpp"
 #include "config_registry.hpp"
 #include "msp_server.hpp"
-#include "boost_asio_transport.hpp"
+#include "posix_tcp_transport.hpp"
 #include "blackbox_logger.hpp"
 #include "linux_rt_hardener.hpp"
 #include "icm42688p.hpp"
@@ -32,7 +32,7 @@ static SpscTlpRing<64> g_telemetry_ring;
 static SpscTlpRing<64> g_logging_ring;
 
 static drivers::gps::GpsDriver g_gps_driver;
-static msp::MspServer<msp::BoostAsioTransport> g_msp_server{5760};
+static msp::MspServer<msp::PosixTcpTransport> g_msp_server{5760};
 static logging::BlackboxLogger g_blackbox_logger;
 
 // Minimal Dummy SBC Target for FlightEngine concept

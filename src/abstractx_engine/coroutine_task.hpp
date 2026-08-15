@@ -30,42 +30,31 @@ namespace abstractx {
 // =============================================================================
 // 1. Zero-Allocation Coroutine Static Memory Pool with FreeList Recycling
 // =============================================================================
-template <size_t PoolSize = 16384>
+template <size_t PoolSize = 65536>
 class CoroutineStaticPool {
 public:
     static void* allocate(size_t size) noexcept {
-        if (free_list_head_) {
-            Node* node = free_list_head_;
-            free_list_head_ = free_list_head_->next;
-            return static_cast<void*>(node);
+        const size_t aligned_size = (size + 63u) & ~static_cast<size_t>(63u);
+        if (offset_ + aligned_size <= PoolSize) {
+            void* ptr = &pool_[offset_];
+            offset_ += aligned_size;
+            return ptr;
         }
-        if (offset_ + size > PoolSize) {
-            offset_ = 0; // Wrap around static pool
-        }
+        offset_ = 0;
         void* ptr = &pool_[offset_];
-        offset_ += size;
+        offset_ += aligned_size;
         return ptr;
     }
 
-    static void deallocate(void* ptr) noexcept {
-        if (!ptr) return;
-        Node* node = static_cast<Node*>(ptr);
-        node->next = free_list_head_;
-        free_list_head_ = node;
-    }
+    static void deallocate(void* /*ptr*/) noexcept {}
 
     static void reset() noexcept {
         offset_ = 0;
-        free_list_head_ = nullptr;
     }
 
 private:
-    struct Node {
-        Node* next;
-    };
-    alignas(16) static inline uint8_t pool_[PoolSize];
+    alignas(64) static inline uint8_t pool_[PoolSize];
     static inline size_t offset_{0};
-    static inline Node* free_list_head_{nullptr};
 };
 
 // =============================================================================
@@ -133,6 +122,20 @@ public:
         return handle_.promise().result_.value_or(T{});
     }
 
+    [[nodiscard]] bool await_ready() const noexcept {
+        return !handle_ || handle_.done();
+    }
+
+    void await_suspend(std::coroutine_handle<>) noexcept {
+        if (handle_ && !handle_.done()) {
+            handle_.resume();
+        }
+    }
+
+    [[nodiscard]] T await_resume() const noexcept {
+        return handle_.promise().result_.value_or(T{});
+    }
+
 private:
     std::coroutine_handle<promise_type> handle_{nullptr};
 };
@@ -193,6 +196,18 @@ public:
         return false;
     }
 
+    [[nodiscard]] bool await_ready() const noexcept {
+        return !handle_ || handle_.done();
+    }
+
+    void await_suspend(std::coroutine_handle<>) noexcept {
+        if (handle_ && !handle_.done()) {
+            handle_.resume();
+        }
+    }
+
+    void await_resume() const noexcept {}
+
 private:
     std::coroutine_handle<promise_type> handle_{nullptr};
 };
@@ -224,7 +239,7 @@ struct TimerAwaiter {
 
     constexpr void await_suspend(std::coroutine_handle<>) const noexcept {}
 
-    [[nodiscard]] bool await_resume() const noexcept {
+    bool await_resume() const noexcept {
         return !cancelled_;
     }
 

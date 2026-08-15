@@ -111,9 +111,9 @@ void CtfStreamServer::poll_and_stream(SpscTlpRing<64>& log_ring) noexcept {
             udp_addr.sin_port = htons(config_.port);
             inet_pton(AF_INET, config_.target_ip.data(), &udp_addr.sin_addr);
 
-            sendto(socket_fd_, &tlp.wire, sizeof(asp_tlp64_t), 0, (struct sockaddr*)&udp_addr, sizeof(udp_addr));
+            sendto(socket_fd_, &tlp.wire, sizeof(TlpWire64), 0, (struct sockaddr*)&udp_addr, sizeof(udp_addr));
         } else if (config_.protocol == CtfTransportProtocol::TcpServer && client_fd_ >= 0) {
-            ssize_t written = write(client_fd_, &tlp.wire, sizeof(asp_tlp64_t));
+            ssize_t written = write(client_fd_, &tlp.wire, sizeof(TlpWire64));
             if (written <= 0) {
                 close(client_fd_);
                 client_fd_ = -1;

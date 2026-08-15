@@ -10,6 +10,7 @@
 
 #include "target_interface.hpp"
 #include "flash_storage.hpp"
+#include "bus_concepts.hpp"
 #include "asp_tlp64.hpp"
 #include "spsc_tlp_ring.hpp"
 #include <cstdint>
@@ -43,6 +44,10 @@ public:
     static uint64_t get_hardware_timestamp_ns() noexcept;
     static bool flash_write(uint32_t offset, std::span<const uint8_t> data) noexcept;
     static bool flash_read(uint32_t offset, std::span<uint8_t> data) noexcept;
+
+    // Bus accessors — return singleton instances initialised from SensorConfig
+    static drivers::bus::Pico2SpiBus& get_imu_spi_bus() noexcept;
+    static drivers::bus::Pico2I2cBus& get_baro_mag_i2c_bus() noexcept;
 };
 
 static_assert(concepts::IsPlatform<Pico2Target>, "Pico2Target must satisfy IsPlatform concept");

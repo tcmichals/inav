@@ -24,9 +24,15 @@ This document is the persistent, step-by-step master checklist and architectural
 | **1.9** | **Airframe Motor/Servo Mixer** | `external/inav/src/main/flight/mixer.c`<br>`external/betaflight/src/main/flight/mixer.c` | [`src/flight/mixer.hpp`](../src/flight/mixer.hpp) | `COMPLETE` | `TEST 8/14` in `run_unit_tests` |
 | **1.10** | **2-Stage Failsafe Engine** | `external/inav/src/main/flight/failsafe.c` | [`src/flight/failsafe.hpp`](../src/flight/failsafe.hpp) | `COMPLETE` | `TEST 14/14` in `run_unit_tests` |
 | **1.11** | **MSP v1/v2 Serialization** | `external/inav/src/main/io/msp.c`<br>`external/inav/src/main/msp/msp_protocol.h` | [`src/msp/msp_protocol.cpp`](../src/msp/msp_protocol.cpp) | `COMPLETE` | `DIFF 7/7` in `submodule_differential_test` |
-| **1.12** | **DShot RPM Notch Filtering** | `external/inav/src/main/flight/rpm_filter.c` | [`src/flight/rpm_filter.hpp`](../src/flight/rpm_filter.hpp) | `PENDING` | `test_rpm_filter_differential` |
-| **1.13** | **Matrix Smith Predictor** | `external/inav/src/main/flight/smith_predictor.c` | [`src/flight/smith_predictor.hpp`](../src/flight/smith_predictor.hpp) | `PENDING` | `test_smith_predictor_differential` |
-| **1.14** | **Wind & RTH Estimators** | `external/inav/src/main/flight/wind_estimator.c`<br>`external/inav/src/main/flight/rth_estimator.c` | [`src/flight/wind_estimator.hpp`](../src/flight/wind_estimator.hpp) | `PENDING` | `test_wind_estimator_differential` |
+| **1.12** | **DShot RPM Notch Filtering** | `external/inav/src/main/flight/rpm_filter.c` | [`src/flight/rpm_filter.hpp`](../src/flight/rpm_filter.hpp) | `COMPLETE` | `DIFF 8/8` in `submodule_differential_test` |
+| **1.13** | **Matrix Smith Predictor** | `external/inav/src/main/flight/smith_predictor.c` | [`src/flight/smith_predictor.hpp`](../src/flight/smith_predictor.hpp) | `COMPLETE` | `TEST 16/18` in `run_unit_tests` |
+| **1.14** | **Wind & RTH Estimators** | `external/inav/src/main/flight/wind_estimator.c`<br>`external/inav/src/main/flight/rth_estimator.c` | [`src/flight/wind_estimator.hpp`](../src/flight/wind_estimator.hpp) | `COMPLETE` | `TEST 17/19` in `run_unit_tests` |
+| **1.15** | **Sensor Alignment & 3D Rotation** | `external/inav/src/main/sensors/boardalignment.c` | [`src/sensors/sensor_alignment.hpp`](../src/sensors/sensor_alignment.hpp) | `COMPLETE` | `TEST 19/19` in `run_unit_tests` |
+| **1.16** | **Sensor Calibration & Temp Drift** | `external/inav/src/main/sensors/gyro.c`<br>`external/inav/src/main/sensors/compass.c` | [`src/sensors/sensor_calibration.hpp`](../src/sensors/sensor_calibration.hpp) | `COMPLETE` | `TEST 19/19` in `run_unit_tests` |
+| **1.17** | **MS4525DO Digital Pitot Airspeed** | `external/inav/src/main/sensors/pitotmeter.c`<br>`external/inav/src/main/drivers/pitotmeter/pitotmeter_ms4525.c` | [`src/drivers/pitot/ms4525do.hpp`](../src/drivers/pitot/ms4525do.hpp) | `COMPLETE` | `TEST 19/19` in `run_unit_tests` |
+| **1.18** | **Battery ADC & Energy Monitor** | `external/inav/src/main/sensors/battery.c`<br>`external/betaflight/src/main/sensors/battery.c` | [`src/sensors/battery_monitor.hpp`](../src/sensors/battery_monitor.hpp) | `COMPLETE` | `TEST 19/19` in `run_unit_tests` |
+| **1.19** | **Sensor Auto-Detection & Displays** | `external/inav/src/main/drivers/display/` | [`src/drivers/sensor_detector.hpp`](../src/drivers/sensor_detector.hpp)<br>[`oled_ssd1306.hpp`](../src/drivers/display/oled_ssd1306.hpp)<br>[`osd_max7456.hpp`](../src/drivers/display/osd_max7456.hpp) | `COMPLETE` | `TEST 18/19` in `run_unit_tests` |
+| **1.20** | **Linux SBC FPGA PCIe DMA Transport** | `external/inav/src/main/target/` | [`src/target/linux_common/linux_fpga_transport.hpp`](../src/target/linux_common/linux_fpga_transport.hpp) | `COMPLETE` | `TEST 19/19` in `run_unit_tests` |
 
 ---
 
@@ -63,26 +69,29 @@ This document is the persistent, step-by-step master checklist and architectural
   * Frequency tracking per motor RPM harmonic ($f = \frac{\text{RPM}}{60} \times h$).
   * Cascaded biquad notch filters per motor harmonic on Roll, Pitch, and Yaw with 150Hz PT1 smoothing.
   * Validated bit-exact in submodule differential test suite `[DIFF 8/8]`.
-- [ ] **Port Matrix Smith Predictor** (`src/flight/smith_predictor.hpp`):
+- [x] **Port Matrix Smith Predictor** (`src/flight/smith_predictor.hpp`):
   * Phase lead compensation for low-pass filter group delay.
-- [ ] **Port Wind & RTH Estimator** (`src/flight/wind_estimator.hpp`):
+- [x] **Port Wind & RTH Estimator** (`src/flight/wind_estimator.hpp`):
   * Earth-frame horizontal wind velocity estimation from airspeed / groundspeed delta.
-
 
 ---
 
 ### Phase 2: Protocols, Handshakes & Ground Station Support
 - [x] **MSP v1 & MSP v2 Handshake Processing** (`src/msp/msp_protocol.cpp`):
   * Support `MSP_FC_VARIANT`, `MSP_API_VERSION`, `MSP_BOARD_INFO`, `MSP_RAW_IMU`, `MSP_ATTITUDE`, `MSP_ALTITUDE`, `MSP_RC`, `MSP_PID`, `MSP2_COMMON_GET_EZ_TUNE`, `MSP2_COMMON_SET_EZ_TUNE`.
-- [ ] **CRSF / ELRS Native Protocol Decoder** (`src/drivers/rc/crsf.hpp`):
-  * Direct bidirectional CRSF telemetry telemetry frames with link stats.
+- [x] **CRSF / ELRS Native Protocol Decoder** (`src/drivers/rc/crsf.hpp`):
+  * Direct bidirectional CRSF telemetry frames with link stats.
 
 ---
 
 ### Phase 3: Hardware Diagnostics & SITL Emulation
 - [x] **Live 6-DOF SITL Simulation** (`src/target/sitl/sitl_main.cpp`).
 - [x] **3D Hardware Dashboard & EFIS PFD** (`tools/gui_fc_bench_dashboard.py`).
-- [x] **Pico 2 RP2350 Bare-Metal Hardware Harness** (`src/target/pico2_rp2350/pico2_hw_test.cpp`).
+- [x] **Decoupled Top-Level TLP Drivers & Bottom-Half PCIe Scheduler** (`src/drivers/bus/tlp_channel.hpp`, `src/target/common/pcie_tlp_scheduler.hpp`).
+- [x] **Pure Asynchronous Driver Standard**:
+  * Strict elimination of legacy synchronous `init()` wrappers and blocking `delay_ms()` calls across all sensor drivers.
+  * All chip drivers operate 100% as non-blocking C++20 coroutines (`async_init()`, `sample_loop()`).
+  * Bottom-half layer handles asynchronous PCIe TLP packet dispatching/reception (`Tlp64` / `TlpChannel`) with zero thread blocking.
 
 ---
 
@@ -103,7 +112,12 @@ cd build && ./submodule_differential_test
 python3 tools/compare_inav_parity.py
 ```
 
-### Run Comprehensive 14-Suite Unit Tests
+### Run Comprehensive 20-Suite Unit Tests
 ```bash
 cd build && ./run_unit_tests
+```
+
+### Run Linux Board Hardware Test Suite
+```bash
+python3 tools/test_board_hardware.py --device sitl
 ```

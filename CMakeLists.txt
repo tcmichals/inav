@@ -32,18 +32,27 @@ endif()
 set(ABSTRACTX_PATH "${CMAKE_CURRENT_SOURCE_DIR}/../AbstractX" CACHE PATH "Path to AbstractX repository")
 
 if(NOT EXISTS "${ABSTRACTX_PATH}/include/asp_tlp64.hpp")
-    message(FATAL_ERROR "AbstractX headers not found at ${ABSTRACTX_PATH}/include. Please set ABSTRACTX_PATH.")
+    if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/include/asp_tlp64.hpp")
+        set(ABSTRACTX_PATH "${CMAKE_CURRENT_SOURCE_DIR}")
+        message(STATUS "Using local AbstractX headers at: ${ABSTRACTX_PATH}/include")
+    else()
+        message(FATAL_ERROR "AbstractX headers not found at ${ABSTRACTX_PATH}/include. Please set ABSTRACTX_PATH.")
+    endif()
+else()
+    message(STATUS "Found canonical AbstractX headers at: ${ABSTRACTX_PATH}/include")
 endif()
-
-message(STATUS "Found canonical AbstractX headers at: ${ABSTRACTX_PATH}/include")
 
 # Include Directories
 include_directories(
+    "${CMAKE_CURRENT_SOURCE_DIR}/src"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/sensors"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/drivers/pitot"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/abstractx_engine"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/config"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/msp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/flight"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/drivers"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/drivers/bus"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/drivers/imu"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/drivers/baro"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/drivers/mag"
@@ -58,6 +67,7 @@ include_directories(
 
     "${CMAKE_CURRENT_SOURCE_DIR}/src/scheduler"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/target"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/target/common"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/target/linux_common"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/target/sitl"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/target/pico2_rp2350"
@@ -103,16 +113,24 @@ if(PICO_BOARD OR BUILD_PICO2)
 # Target Definitions: Host Linux / SITL / SBC / Test Targets
 # ==============================================================================
 else()
-    # Find Boost for Host / SITL TCP/UDP Async Networking
-    find_package(Boost 1.74 REQUIRED COMPONENTS system)
-    message(STATUS "Found Boost ${Boost_VERSION} at: ${Boost_INCLUDE_DIRS}")
+    # Check for Boost (optional; native POSIX networking used by default)
+    find_package(Boost 1.74 QUIET COMPONENTS system)
+    if(Boost_FOUND)
+        message(STATUS "Found Boost ${Boost_VERSION} at: ${Boost_INCLUDE_DIRS}")
+        set(BOOST_LIBS Boost::system)
+    else()
+        message(STATUS "Using native POSIX TCP socket networking")
+        set(BOOST_LIBS "")
+    endif()
 
     # Core Production Executable Target for SITL / Desktop / HIL Verification
     add_executable(inav_abstractx_sitl
         src/target/sitl/sitl_main.cpp
         ${COMMON_SOURCES}
     )
-    target_link_libraries(inav_abstractx_sitl PRIVATE Boost::system)
+    if(BOOST_LIBS)
+        target_link_libraries(inav_abstractx_sitl PRIVATE ${BOOST_LIBS})
+    endif()
 
     # Dedicated Debug Executable Target for GDB / VSCode Debugger (-O0 -g3)
     add_executable(inav_sitl_debug
@@ -120,14 +138,18 @@ else()
         ${COMMON_SOURCES}
     )
     target_compile_options(inav_sitl_debug PRIVATE -g3 -O0 -DDEBUG)
-    target_link_libraries(inav_sitl_debug PRIVATE Boost::system)
+    if(BOOST_LIBS)
+        target_link_libraries(inav_sitl_debug PRIVATE ${BOOST_LIBS})
+    endif()
 
     # Dedicated Linux Quad-Core SBC Executable Target
     add_executable(inav_linux_sbc
         src/target/linux_sbc/linux_sbc_main.cpp
         ${COMMON_SOURCES}
     )
-    target_link_libraries(inav_linux_sbc PRIVATE Boost::system)
+    if(BOOST_LIBS)
+        target_link_libraries(inav_linux_sbc PRIVATE ${BOOST_LIBS})
+    endif()
 
     # Locate CppUTest for Embedded Unit Testing & Test Groups
     find_package(PkgConfig QUIET)
@@ -156,10 +178,8 @@ else()
         ${COMMON_SOURCES}
     )
     if(CPPUTEST_FOUND)
-        target_link_libraries(run_unit_tests PRIVATE Boost::system ${CPPUTEST_LIBRARIES})
+        target_link_libraries(run_unit_tests PRIVATE ${CPPUTEST_LIBRARIES})
         target_compile_definitions(run_unit_tests PRIVATE HAVE_CPPUTEST=1)
-    else()
-        target_link_libraries(run_unit_tests PRIVATE Boost::system)
     endif()
 
     # On-Device Pico 2 W & Linux Hardware Test Target
@@ -167,28 +187,27 @@ else()
         src/target/pico2_rp2350/pico2_hw_test.cpp
         ${COMMON_SOURCES}
     )
-    target_link_libraries(pico2_hw_test PRIVATE Boost::system)
 
     # Submodule Direct Differential Test Target (INAV & Betaflight Submodules)
     add_executable(submodule_differential_test
         test/test_submodule_differential.cpp
         ${COMMON_SOURCES}
     )
-    target_link_libraries(submodule_differential_test PRIVATE Boost::system)
 
     # Legacy Task Scheduler vs C++20 Coroutine Performance Benchmark
     add_executable(scheduler_benchmark
         test/test_scheduler_benchmark.cpp
         ${COMMON_SOURCES}
     )
-    target_link_libraries(scheduler_benchmark PRIVATE Boost::system)
 
     # Full-Stack Multi-Phase Flight Mission Parity Test
     add_executable(full_stack_parity_test
         test/test_full_stack_parity.cpp
         ${COMMON_SOURCES}
     )
-    target_link_libraries(full_stack_parity_test PRIVATE Boost::system)
+    if(BOOST_LIBS)
+        target_link_libraries(full_stack_parity_test PRIVATE ${BOOST_LIBS})
+    endif()
 
     # Enable CTest integration
     enable_testing()

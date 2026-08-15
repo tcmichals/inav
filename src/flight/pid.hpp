@@ -83,6 +83,15 @@ struct PidConfig {
     Axis3f d_max{35.0f, 38.0f, 0.0f};
     float d_min_gain_scale{0.005f};
 
+    // D-Boost Settings (Betaflight / INAV)
+    float d_boost_gain{1.2f};           // D-boost gain multiplier (0.0 = disabled)
+    float d_boost_cutoff_hz{15.0f};     // Stick acceleration filter cutoff (Hz)
+    float d_boost_max{2.0f};            // Maximum D-gain boost multiplier
+
+    // I-Term Relax Settings (Betaflight / INAV)
+    uint8_t iterm_relax_type{1u};       // 0: OFF, 1: SETPOINT, 2: GYRO
+    float   iterm_relax_cutoff_hz{15.0f};// Stick motion detector cutoff (Hz)
+
     // TPA (Throttle PID Attenuation) Settings
     float tpa_breakpoint{0.5f}; // Throttle threshold (0.0 to 1.0)
     float tpa_rate{0.20f};       // Gain reduction fraction above breakpoint
@@ -191,13 +200,20 @@ public:
             const float kp_effective = config_.kp[axis] * tpa_factor;
             state.p_out[axis] = (error * kp_effective) * 0.032f; // Scaled to normalized range
 
-            // --- I-Term (with Anti-Gravity and Anti-Windup Clamping) ---
-            const float ki_effective = config_.ki[axis] * ag_multiplier;
+            // --- I-Term (with Anti-Gravity, I-Term Relax, and Anti-Windup Clamping) ---
+            float iterm_relax_factor = 1.0f;
+            if (config_.iterm_relax_type > 0u && axis < 2u) { // Relax applied to Roll & Pitch
+                const float setpoint_rate = std::abs(setpoint - prev_setpoint_[axis]) / dt_s;
+                const float smooth_sp_rate = iterm_relax_lpf_[axis].update(setpoint_rate);
+                iterm_relax_factor = std::clamp(1.0f - (smooth_sp_rate / 300.0f), 0.1f, 1.0f);
+            }
+
+            const float ki_effective = config_.ki[axis] * ag_multiplier * iterm_relax_factor;
             i_term_[axis] += (error * ki_effective * dt_s) * 0.032f;
             i_term_[axis] = std::clamp(i_term_[axis], -0.40f, 0.40f);
             state.i_out[axis] = i_term_[axis];
 
-            // --- D-Term (Cascaded LowPass + Notch on Delta Gyro with D-Min) ---
+            // --- D-Term (Cascaded LowPass + Notch on Delta Gyro with D-Min & D-Boost) ---
             const float delta_gyro = (gyro - prev_gyro_[axis]) / dt_s;
             prev_gyro_[axis] = gyro;
 
@@ -213,7 +229,17 @@ public:
             const float activity = std::max(std::abs(filtered_d), setpoint_delta);
             const float d_dynamic_range = config_.d_max[axis] - config_.d_min[axis];
             const float dynamic_d = config_.d_min[axis] + std::min(activity * config_.d_min_gain_scale * d_dynamic_range, d_dynamic_range);
-            const float kd_effective = (dynamic_d > 0.0f ? dynamic_d : config_.kd[axis]) * tpa_factor;
+
+            // D-Boost Stick Acceleration Damping
+            float d_boost_factor = 1.0f;
+            if (config_.d_boost_gain > 0.0f && axis < 2u) {
+                const float stick_accel = std::abs(setpoint_delta - prev_setpoint_delta_[axis]) / dt_s;
+                prev_setpoint_delta_[axis] = setpoint_delta;
+                const float smooth_accel = d_boost_lpf_[axis].update(stick_accel);
+                d_boost_factor = 1.0f + std::min(smooth_accel * (config_.d_boost_gain * 0.0005f), config_.d_boost_max - 1.0f);
+            }
+
+            const float kd_effective = (dynamic_d > 0.0f ? dynamic_d : config_.kd[axis]) * tpa_factor * d_boost_factor;
 
             state.d_out[axis] = (-filtered_d * kd_effective) * 0.0005f;
 
@@ -242,6 +268,8 @@ private:
             if (config_.dterm_notch_hz > 0.0f) {
                 dterm_notch_[axis].configure(BiquadType::Notch, config_.dterm_notch_hz, 1000.0f, config_.dterm_notch_q);
             }
+            d_boost_lpf_[axis].set_cutoff(config_.d_boost_cutoff_hz, 0.001f);
+            iterm_relax_lpf_[axis].set_cutoff(config_.iterm_relax_cutoff_hz, 0.001f);
         }
         ag_filter_.set_cutoff(config_.anti_gravity_cutoff_hz, 0.001f);
     }
@@ -268,6 +296,7 @@ private:
     Axis3f i_term_{};
     Axis3f prev_gyro_{};
     Axis3f prev_setpoint_{};
+    Axis3f prev_setpoint_delta_{};
     float prev_throttle_{0.0f};
     float ag_accumulator_{0.0f};
 
@@ -276,6 +305,8 @@ private:
     std::array<Pt1Filter, 3> dterm_lpf1_{};
     std::array<Pt2Filter, 3> dterm_lpf2_{};
     std::array<BiquadFilter, 3> dterm_notch_{};
+    std::array<Pt1Filter, 3> d_boost_lpf_{};
+    std::array<Pt1Filter, 3> iterm_relax_lpf_{};
     Pt1Filter ag_filter_{};
 };
 
