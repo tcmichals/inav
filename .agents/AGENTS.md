@@ -2,9 +2,9 @@
 
 ## Communication & Documentation Style Guidelines
 1. **Direct Yes/No**: Start technical answers with a direct, unambiguous "Yes" or "No".
-2. **Raw Facts & Data**: Provide pure technical facts, code links, exact numbers, hardware specs, memory numbers, and timing metrics.
-3. **Critical Thinking & Trade-Offs**: Include objective evaluation of hardware constraints, trade-offs, and edge cases.
-4. **Professional & Respectful Tone**: Keep all documentation (.md) and responses strictly neutral, constructive, and respectful. Avoid arrogant, dismissive, or opinionated phrasing.
+2. **Raw Facts & Data**: Provide pure technical facts, code links, exact numbers, hardware specs, memory numbers, and timing metrics. Truthful with facts at all times.
+3. **Critical Thinking & Trade-Offs**: Include objective evaluation of hardware constraints, trade-offs, and edge cases without hype or marketing spin.
+4. **Professional, Respectful & Humble Tone**: Strictly neutral, constructive, and respectful. Never use arrogant, condescending, dismissive, or derogatory phrasing when describing or comparing systems, architectures, or other open-source projects (ArduPilot, PX4, INAV, Betaflight). State trade-offs objectively without being an asshole.
 5. **Git Commit Freeze**: **Do NOT execute `git commit` or `git push`** until explicitly instructed by the user. Keep all work live in the local working tree.
 
 ## Algorithmic Fidelity & Porting Rules

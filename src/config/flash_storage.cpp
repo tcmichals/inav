@@ -9,10 +9,10 @@
  */
 
 #include "flash_storage.hpp"
+#include <cstring>
 
 #if defined(__linux__) || defined(__APPLE__)
 #include <fstream>
-#include <cstring>
 #endif
 
 #if defined(PICO_BOARD)

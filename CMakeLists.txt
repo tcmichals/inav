@@ -23,7 +23,11 @@ endif()
 if(MSVC)
     add_compile_options(/W4 /WX)
 else()
-    add_compile_options(-Wall -Wextra -Wpedantic -Wconversion -Werror=vla)
+    if(PICO_BOARD OR BUILD_PICO2)
+        add_compile_options(-Wall -Wextra)
+    else()
+        add_compile_options(-Wall -Wextra -Wpedantic -Wconversion -Werror=vla)
+    endif()
     add_compile_options($<$<CONFIG:Debug>:-g3> $<$<CONFIG:Debug>:-O0> $<$<CONFIG:Debug>:-DDEBUG>)
     add_compile_options($<$<CONFIG:Release>:-O3> $<$<CONFIG:Release>:-DNDEBUG>)
 endif()
@@ -108,6 +112,23 @@ if(PICO_BOARD OR BUILD_PICO2)
 
     # Enable .uf2, .bin, .hex firmware artifacts
     pico_add_extra_outputs(inav_abstractx_pico2w)
+
+    # Dedicated ICM-42688-P Diagnostic Bench Test Target
+    add_executable(inav_pico2_imu_test
+        src/target/pico2_rp2350/pico2_imu_test.cpp
+        ${COMMON_SOURCES}
+    )
+
+    target_link_libraries(inav_pico2_imu_test PRIVATE
+        pico_stdlib
+        hardware_spi
+        hardware_i2c
+        hardware_flash
+        hardware_gpio
+        hardware_timer
+    )
+
+    pico_add_extra_outputs(inav_pico2_imu_test)
 
 # ==============================================================================
 # Target Definitions: Host Linux / SITL / SBC / Test Targets

@@ -43,11 +43,11 @@ using namespace abstractx;
 
 // ---------------------------------------------------------------------------
 // Global SPSC rings: bottom-half sensor loops push, top-half engine pops.
-// Sized for RP2350 520 KB SRAM (g_logging_ring retains 1024 frames = 64 KB
+// Sized for RP2350 520 KB SRAM (g_logging_ring retains 64 frames = 4 KB
 // of boot diagnostics and calibration before TCP client attaches).
 // ---------------------------------------------------------------------------
-static SpscTlpRing<128u>  g_telemetry_ring;
-static SpscTlpRing<1024u> g_logging_ring;
+static SpscTlpRing<64u> g_telemetry_ring;
+static SpscTlpRing<64u> g_logging_ring;
 
 // ---------------------------------------------------------------------------
 // Singleton driver instances (constructed from SensorConfig)
@@ -77,8 +77,8 @@ void core1_flight_loop_entry() {
     imu_cfg.gyro_range_dps  = sc.imu_gyro_range_dps;
     imu_cfg.enable_drdy_int = sc.imu_enable_drdy;
 
-    drivers::imu::Icm42688P<drivers::bus::Pico2SpiBus> imu_driver{imu_bus, imu_cfg};
-    drivers::baro::Bmp280<drivers::bus::Pico2I2cBus>   baro_driver{baro_bus, sc.baro_i2c_addr};
+    drivers::imu::Icm42688PDriver<drivers::bus::Pico2SpiBus> imu_driver{imu_bus, imu_cfg};
+    drivers::baro::Bmp280Driver<drivers::bus::Pico2I2cBus>   baro_driver{baro_bus, sc.baro_i2c_addr};
 
     // -----------------------------------------------------------------------
     // Stage 1: Init sensors — non-blocking coroutine async_init
@@ -106,8 +106,8 @@ void core1_flight_loop_entry() {
 
     flight::FlightEngine<
         target::TargetAdapter<target::pico2::Pico2Target>,
-        drivers::imu::Icm42688P<drivers::bus::Pico2SpiBus>,
-        drivers::baro::Bmp280<drivers::bus::Pico2I2cBus>,
+        drivers::imu::Icm42688PDriver<drivers::bus::Pico2SpiBus>,
+        drivers::baro::Bmp280Driver<drivers::bus::Pico2I2cBus>,
         drivers::gps::GpsDriver,
         4u
     > pico_engine{platform_adapter, g_gps_driver};
@@ -123,7 +123,7 @@ void core1_flight_loop_entry() {
         imu_loop_task.resume();
         baro_loop_task.resume();
         engine_task.resume();
-        sleep_us(125u); // 8 kHz = 125 µs per tick
+        ::sleep_us(125u); // 8 kHz = 125 µs per tick
     }
 }
 
@@ -169,7 +169,7 @@ int main() {
             }
         }
 
-        sleep_ms(1u);
+        ::sleep_ms(1u);
     }
 
     return 0;

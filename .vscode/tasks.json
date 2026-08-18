@@ -2,6 +2,26 @@
     "version": "2.0.0",
     "tasks": [
         {
+            "label": "Build Pico 2 W (Debug)",
+            "type": "shell",
+            "command": "export PATH=/home/tcmichals/.tools/gcc-arm-none-eabi/bin:$PATH && export PICO_SDK_PATH=/home/tcmichals/.tools/pico-sdk && cmake -B build_pico2w_debug -DPICO_BOARD=pico2_w -DCMAKE_BUILD_TYPE=Debug && cmake --build build_pico2w_debug -j$(nproc)",
+            "options": {
+                "cwd": "${workspaceFolder}"
+            },
+            "group": "build",
+            "problemMatcher": "$gcc"
+        },
+        {
+            "label": "Build Pico 2 W (Release)",
+            "type": "shell",
+            "command": "export PATH=/home/tcmichals/.tools/gcc-arm-none-eabi/bin:$PATH && export PICO_SDK_PATH=/home/tcmichals/.tools/pico-sdk && cmake -B build_pico2w -DPICO_BOARD=pico2_w -DCMAKE_BUILD_TYPE=Release && cmake --build build_pico2w -j$(nproc)",
+            "options": {
+                "cwd": "${workspaceFolder}"
+            },
+            "group": "build",
+            "problemMatcher": "$gcc"
+        },
+        {
             "label": "Build inav_sitl_debug",
             "type": "shell",
             "command": "cmake -B build -DCMAKE_BUILD_TYPE=Debug && cmake --build build --target inav_sitl_debug",

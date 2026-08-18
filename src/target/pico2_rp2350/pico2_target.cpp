@@ -111,8 +111,8 @@ bool Pico2Target::flash_read(uint32_t offset,
                               std::span<uint8_t> data) noexcept {
 #if defined(PICO_BOARD)
     // RP2350 XIP base: 0x10000000 + offset (memory-mapped read, no SPI needed)
-    static constexpr uint32_t XIP_BASE = 0x10000000u;
-    const uint8_t* src = reinterpret_cast<const uint8_t*>(XIP_BASE + offset);
+    static constexpr uint32_t FLASH_XIP_BASE = 0x10000000u;
+    const uint8_t* src = reinterpret_cast<const uint8_t*>(FLASH_XIP_BASE + offset);
     for (size_t i = 0u; i < data.size(); ++i) { data[i] = src[i]; }
     return true;
 #else

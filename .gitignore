@@ -1,5 +1,10 @@
-build/
+build*/
 *.bin
+*.elf
+*.uf2
+*.hex
+*.map
+*.dis
 *.bbl
 *.ctf
 *.sr

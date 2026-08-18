@@ -185,6 +185,10 @@ public:
         co_return ImuInitResult::Ok;
     }
 
+    [[nodiscard]] bool is_initialized() const noexcept {
+        return initialized_;
+    }
+
     // -----------------------------------------------------------------------
     // BOTTOM HALF: sample_loop()
     //   Runs forever as a coroutine.  For each IMU sample period:
@@ -241,7 +245,7 @@ public:
             tlp.wire.payload[12u] = rx_buf_[0u];
             tlp.wire.payload[13u] = rx_buf_[1u];
 
-            ring.push(tlp);
+            (void)ring.push(tlp);
         }
         co_return;
     }

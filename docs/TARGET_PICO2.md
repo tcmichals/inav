@@ -52,8 +52,10 @@ The Raspberry Pi RP2350 incorporates dual ARM Cortex-M33 cores (or dual Hazard3 
 | 17 | **GPIO 13**| IMU CS | GPIO Output | Primary IMU Chip Select |
 | 19 | **GPIO 14**| IMU DRDY | GPIO IRQ / PIO Trigger | High-Resolution Nanosecond Timestamp Latch |
 | 20 | **GPIO 15**| WS2812 LED Strip| PIO 1 State Machine 2 | Status RGB LED Strip |
-| 38 | **VSYS** | 5V Power Input | System Power Bus | 5V BEC from ESC / PDB |
-| 39 | **VSYS_ADC**| ADC3 (GPIO 29) | On-board Voltage Divider | Battery Voltage Monitor (VBat) |
+| 36 | **3V3_OUT** | 3.3V Power Out  | Linear Regulator | Clean 3.3V Sensor Power Rail |
+| 38 | **GND**     | Power Ground    | Ground Bus       | Star Ground Reference |
+| 39 | **VSYS**    | 5V Power Input  | System Power Bus | 5V BEC from ESC / PDB |
+| 34 | **GPIO 28** | ADC2 / VBat Sense| ADC Voltage Divider| External LiPo Battery Monitor |
 
 ---
 

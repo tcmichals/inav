@@ -182,7 +182,7 @@ public:
 
     void delay_ms(uint32_t ms) noexcept {
 #if defined(PICO_BOARD)
-        sleep_ms(ms);
+        ::sleep_ms(ms);
 #else
         (void)ms;
 #endif
@@ -324,7 +324,7 @@ public:
 
     void delay_ms(uint32_t ms) noexcept {
 #if defined(PICO_BOARD)
-        sleep_ms(ms);
+        ::sleep_ms(ms);
 #else
         (void)ms;
 #endif
