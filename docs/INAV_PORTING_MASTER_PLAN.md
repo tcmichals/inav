@@ -32,7 +32,9 @@ This document is the persistent, step-by-step master checklist and architectural
 | **1.17** | **MS4525DO Digital Pitot Airspeed** | `external/inav/src/main/sensors/pitotmeter.c`<br>`external/inav/src/main/drivers/pitotmeter/pitotmeter_ms4525.c` | [`src/drivers/pitot/ms4525do.hpp`](../src/drivers/pitot/ms4525do.hpp) | `COMPLETE` | `TEST 19/19` in `run_unit_tests` |
 | **1.18** | **Battery ADC & Energy Monitor** | `external/inav/src/main/sensors/battery.c`<br>`external/betaflight/src/main/sensors/battery.c` | [`src/sensors/battery_monitor.hpp`](../src/sensors/battery_monitor.hpp) | `COMPLETE` | `TEST 19/19` in `run_unit_tests` |
 | **1.19** | **Sensor Auto-Detection & Displays** | `external/inav/src/main/drivers/display/` | [`src/drivers/sensor_detector.hpp`](../src/drivers/sensor_detector.hpp)<br>[`oled_ssd1306.hpp`](../src/drivers/display/oled_ssd1306.hpp)<br>[`osd_max7456.hpp`](../src/drivers/display/osd_max7456.hpp) | `COMPLETE` | `TEST 18/19` in `run_unit_tests` |
-| **1.20** | **Linux SBC FPGA PCIe DMA Transport** | `external/inav/src/main/target/` | [`src/target/linux_common/linux_fpga_transport.hpp`](../src/target/linux_common/linux_fpga_transport.hpp) | `COMPLETE` | `TEST 19/19` in `run_unit_tests` |
+| **1.20** | **Cubie A5E Linux SBC Transport** | `external/inav/src/main/target/` | [`src/target/linux_common/linux_fpga_transport.hpp`](../src/target/linux_common/linux_fpga_transport.hpp) | `COMPLETE` | `TEST 19/19` in `run_unit_tests` |
+| **1.21** | **ESP32-P4 MIPI-CSI Camera Optical Flow** | `external/inav/src/main/sensors/opflow.c` | [`src/sensors/optical_flow.hpp`](../src/sensors/optical_flow.hpp) | `PLANNED` | Visual-inertial velocity tracking ($\Delta x, \Delta y$ @ 120 fps) |
+| **1.22** | **Tang Nano 9K FPGA 64B TLP Bridge** | `external/inav/src/main/target/` | [`src/target/linux_common/tang9k_fpga_transport.hpp`](../src/target/linux_common/tang9k_fpga_transport.hpp) | `PLANNED` | Gowin GW1NR-9 64-byte parallel TLP bus bridge |
 
 ---
 
@@ -95,12 +97,32 @@ This document is the persistent, step-by-step master checklist and architectural
 
 ---
 
+### Phase 4: Heterogeneous Hardware Target Pipeline & TLP Sizing
+
+- [x] **RP2350 (Pico 2 / Pico 2 W) Real-Time Actuator Node**:
+  * Dual ARM Cortex-M33 / RISC-V Hazard3 @ 150 MHz with 520 KB SRAM.
+  * Triple-PIO state machines executing jitter-free DShot600, SPI IMU DMA, and CRSF framing.
+  * Standalone failsafe level descent engine.
+- [ ] **ESP32-P4-WIFI6 (Kit A / Slim) Vision & Wireless Node**:
+  * Dual-core RISC-V HP CPU @ 400 MHz + Single-core RISC-V LP CPU @ 40 MHz with 768 KB L2 SRAM + 32 MB PSRAM.
+  * 2-lane MIPI-CSI camera interface with hardware ISP processing 120 fps optical flow velocity vectors ($\Delta x, \Delta y$).
+  * Wi-Fi 6 (802.11ax) companion transport delivering >50 Mbps sustained throughput for 1 kHz binary CTF Blackbox streaming and MSP Configurator over TCP 5760.
+- [ ] **Cubie A5E SBC + Tang Nano 9K FPGA Node**:
+  * Allwinner A523 Octa-Core ARM Cortex-A55 Linux `PREEMPT_RT` mission computer.
+  * Gowin GW1NR-9 FPGA (8640 LUT4, 26 Block RAMs) 64-byte TLP hardware routing bridge.
+- [x] **Sized Software TLP vs. 64-Byte FPGA Bus Protocol**:
+  * Variable-length compact TLP payloads over SPSC rings on microcontrollers (RP2350, ESP32-P4) to conserve internal SRAM footprint.
+  * Automatic 64-byte (512-bit) alignment padding ([TlpWire64](../include/asp_tlp64.hpp)) crossing into Tang 9K FPGA / DMA hardware boundaries for single-cycle DMA ingestion.
+
+---
+
 ## 3. How to Run Validations
 
 ### Run Master 7-Step Automated Pipeline
 ```bash
 python3 tools/run_all_validations.py
 ```
+
 
 ### Run Native Submodule Differential Test Suite
 ```bash
@@ -121,3 +143,4 @@ cd build && ./run_unit_tests
 ```bash
 python3 tools/test_board_hardware.py --device sitl
 ```
+

@@ -122,6 +122,22 @@ The system is strictly divided into **Top-Level Coroutine Drivers** and a **Bott
   - **Watchdog Timeout Race Test (`when_any` / `||`)**: Verifying unplugged I2C/SPI sensors time out safely without stalling the core.
   - **USB CDC / Serial Test Runner**: Clean diagnostic report output over USB serial (`/dev/ttyACM0`) with pass/fail metrics and live sensor readings.
 
+### 6. Heterogeneous Hardware Targets & TLP Protocol Scaling
+- [x] **6.1 RP2350 Pico 2 W Actuator & Safety Engine**:
+  - Dual ARM Cortex-M33 / RISC-V Hazard3 @ 150 MHz with 520 KB SRAM.
+  - Triple-PIO state machines executing DShot600, SPI IMU DMA, and CRSF framing.
+  - Local failsafe level descent engine.
+- [ ] **6.2 ESP32-P4-WIFI6 (Kit A / Slim) Vision & Telemetry Engine**:
+  - Dual RISC-V HP cores (400 MHz) with 2-lane MIPI-CSI camera interface & hardware ISP.
+  - 120 fps optical flow velocity tracking ($\Delta x, \Delta y$) integrated into position estimator.
+  - High-throughput Wi-Fi 6 CTF Blackbox streaming and MSP Configurator over TCP port 5760.
+- [ ] **6.3 Cubie A5E SBC + Tang Nano 9K FPGA Offload Engine**:
+  - Allwinner A523 Octa-Core ARM Cortex-A55 Linux `PREEMPT_RT` mission computer.
+  - Gowin GW1NR-9 FPGA (8640 LUT4, 26 Block RAMs) 64-byte TLP parallel hardware bridge.
+- [x] **6.4 TLP Wire Sizing & Hardware Alignment**:
+  - Compact variable-length TLP payloads over SPSC rings on microcontrollers (RP2350, ESP32-P4) to conserve internal SRAM footprint.
+  - Fixed 64-byte padding (`TlpWire64`) crossing into Tang 9K FPGA / DMA hardware boundaries for single-cycle DMA ingestion.
+
 ---
 
 ## ⚡ Quick Validation Commands
@@ -145,3 +161,4 @@ cd build && ./full_stack_parity_test
 # 6. Run Linux Board Hardware Test Suite (Python & C++)
 python3 tools/test_board_hardware.py --device /dev/uio0
 ```
+
