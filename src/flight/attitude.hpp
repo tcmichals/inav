@@ -303,7 +303,8 @@ public:
         Vector3f compensated_gravity_bf = accel_bf_cmss;
         float acc_ignore_slope_multiplier = 1.0f;
 
-        const float gps_speed_3d_ms = gps_vel_ned_ms.norm();
+        // INAV 9.1 imu.c:742-751 parity: Use PT1-filtered 3D GPS speed evaluated every loop
+        const float gps_speed_3d_ms = (filtered_gps_3d_speed_ > 0.0f) ? filtered_gps_3d_speed_ : gps_vel_ned_ms.norm();
         if (gps_speed_3d_ms > 0.5f) {
             // Multirotor / Plane Centrifugal Acceleration: a_cent = v x omega (cm/s^2)
             const float v_cm_s = gps_speed_3d_ms * 100.0f;

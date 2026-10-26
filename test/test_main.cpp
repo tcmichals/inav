@@ -32,10 +32,13 @@
 #include "sensors/sensor_alignment.hpp"
 #include "sensors/sensor_calibration.hpp"
 #include "sensors/battery_monitor.hpp"
+#include "sensors/optical_flow.hpp"
 #include "drivers/pitot/ms4525do.hpp"
 #include "linux_fpga_transport.hpp"
 #include "tlp_channel.hpp"
 #include "pcie_tlp_scheduler.hpp"
+#include "auto_dma_manager.hpp"
+#include "pico2_dual_core.hpp"
 
 #include "icm42688p.hpp"
 #include "bmi088.hpp"
@@ -1357,6 +1360,39 @@ void test_sensor_alignment_calibration_pitot_battery() {
         assert(std::abs(sample.gyro_deg_s[0] - 10.0f) < 0.1f);
     }
 
+    // 6. Test Optical Flow Sensor & Ground Velocity Estimator (INAV opflow.c)
+    {
+        sensors::OpticalFlowEstimator flow_est{};
+        sensors::OpflowConfig cfg{};
+        cfg.scale = 100.0f;
+        cfg.squal_threshold_high = 35;
+        cfg.squal_threshold_low = 10;
+        flow_est.init(cfg);
+
+        // Quality < 35 -> Invalid
+        auto sample1 = flow_est.update(50, 0, 20, 10000, 1.0f, 10000);
+        assert(!sample1.is_valid);
+
+        // Quality >= 35 -> Valid
+        auto sample2 = flow_est.update(100, 0, 50, 10000, 2.0f, 20000);
+        assert(sample2.is_valid);
+        assert(sample2.vel_ground_m_s[0] > 0.0f);
+
+        // Gyro body rate compensation: angular pitch motion cancels out optical flow
+        flow_est.accumulate_gyro(0.0f, 10.0f, 10000); // 10 dps pitch
+        auto sample3 = flow_est.update(0, 10, 50, 10000, 1.0f, 30000);
+        assert(sample3.body_rate_rad_s[1] > 0.0f);
+
+        // TLP Parser test
+        Tlp64 tlp = Tlp64::make_mem_write(bar::OpticalFlowBase, 0, 1);
+        tlp.wire.payload[0] = 0x64; // dx = 100
+        tlp.wire.payload[1] = 0x00;
+        tlp.wire.payload[4] = 60;   // quality = 60
+        auto tlp_sample = sensors::OpticalFlowEstimator::parse_tlp(tlp, 1.5f);
+        assert(tlp_sample.is_valid);
+        assert(tlp_sample.vel_ground_m_s[0] > 0.0f);
+    }
+
     std::cout << "PASSED!\n";
 }
 
@@ -1523,6 +1559,28 @@ void test_decoupled_tlp_drivers_and_scheduler() {
         assert(baro.is_initialized());
         assert(mag.is_initialized());
         assert(pitot.is_initialized());
+    }
+
+    // 12. Test Auto-DMA Ingestion Manager & Pico 2 Dual-Core Topology
+    {
+        target::common::AutoDmaManager<8> dma_mgr{};
+        SpscTlpRing<64u> imu_dma_ring{};
+        assert(dma_mgr.register_channel(target::common::DmaChannelType::ImuBurst, bar::ImuBase, imu_dma_ring));
+        assert(dma_mgr.is_active(target::common::DmaChannelType::ImuBurst));
+
+        std::array<uint8_t, 14> imu_burst{0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0A, 0x0B, 0x0C, 0x0D, 0x0E};
+        assert(dma_mgr.ingest_burst(target::common::DmaChannelType::ImuBurst, imu_burst, 1000000ULL));
+        assert(!imu_dma_ring.empty());
+        auto opt_tlp = imu_dma_ring.pop();
+        assert(opt_tlp.has_value());
+        assert((opt_tlp->wire.target_address & 0xF000u) == bar::ImuBase);
+        assert(opt_tlp->wire.payload[0] == 0x01);
+        assert(opt_tlp->wire.payload[13] == 0x0E);
+        assert(dma_mgr.stats(target::common::DmaChannelType::ImuBurst).total_packets == 1);
+
+        // Verify Dual Core Topology definitions
+        assert(target::pico2::Pico2DualCoreTopology::target_flight_rate_hz() == 8000u);
+        assert(target::pico2::Pico2DualCoreTopology::msp_server_port() == 5760u);
     }
 
     std::cout << "PASSED!\n";

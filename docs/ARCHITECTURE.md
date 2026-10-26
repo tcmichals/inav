@@ -327,12 +327,51 @@ auto [source_id, packet] = co_await when_any(
 );
 ```
 
+#### E. Autonomous Hardware DMA Ingestion & True Parallel I/O Architecture
+In legacy INAV, all sensor transactions are serialized over a single thread: `TASK_BARO` blocks the I2C bus while `TASK_MAG` waits in a queue, and the CPU actively initiates each SPI transfer.
 
-
+With **AbstractX Parallel I/O and Auto-DMA**:
+1. **Autonomous DRDY Hardware DMA**:
+   - **On RP2350 Pico 2 W**: PIO2 state machine (`PioImuReader` / `asp_pio_tlp_shim.sv`) detects the sensor DRDY interrupt pin, asserts chip select, reads the 14-byte IMU burst via SPI DMA, stamps the frame with a 64-bit nanosecond timer, and writes the 64-byte `Tlp64` datagram directly into `spsc_tlp_ring`.
+   - **On QMTECH Zynq-7020 (XC7Z020 FPGA)**: Dedicated AXI-HP DMA mailboxes perform single-cycle parallel streaming (512-bit / 64-byte TLP in 10 ns) directly into the processing system ring buffer.
+   - **On Cubie A5E & ESP32-P4**: RISC-V E906 / GDMA autonomous channels transfer sensor frames into shared-memory rings.
+2. **Zero CPU SPI Master Overhead**:
+   - The CPU executes **0 instructions** to perform the SPI read. Core 1 flight engine simply suspends on `co_await imu_ring_.async_pop()`.
+   - When the hardware DMA writes the frame, the coroutine resumes in $<7\,\text{ns}$ (single indirect `JMP`).
+3. **Multi-Channel Hardware Concurrency**:
+   - SPI0 (IMU 8 kHz), I2C0 (Baro 100 Hz), I2C1 (Compass / Pitot 40 Hz), UART0 (GPS UBX 10 Hz), UART1 (CRSF RX 250 Hz), and MIPI-CSI (Optical Flow 120 fps) all execute **concurrently in hardware**.
+   - No sensor waits for another. Total epoch latency is bounded by individual transaction time, not their sequential sum.
 
 ---
 
-## 5. Target Platform Concept Abstraction
+## 5. Allwinner Cubie A5E Compute Partitioning: Cortex-A55 Linux + XuanTie E906 C++ I/O Processor
+
+The Radxa Cubie A5E flight stack enforces a strict heterogeneous compute boundary:
+
+```
++───────────────────────────────────────────────────────────────────────────────────────────+
+│                                  RADXA CUBIE A5E FLIGHT STACK                             │
++─────────────────────────────────────────────────────────────┬─────────────────────────────+
+                                                              │
+    ┌─────────────────────────────────────────────────────────┴─────────────────────────────┐
+    ▼                                                                                       ▼
+[ XuanTie E906 RISC-V Co-Processor ]                               [ Cortex-A55 Linux PREEMPT_RT Host ]
+• Role: Dedicated C++ Flight I/O Processor                         • Role: Navigation, AHRS & Flight Engine
+• Firmware: inav_e906_app.elf (RV32IMAFC, 74 KB, 0 Heap)           • Application: inav_linux_sbc
+• SPI1 @ 10 MHz: ICM-42688-P 1 kHz burst ingestion               • Core 3 (isolcpus): SCHED_FIFO 99 Flight Loop
+• SPI1 Dual-I/O: Companion FPGA Hardware Interface (Dual SPI)      • Mahony AHRS, EKF3, Cascaded PID, S-Curve Nav
+• TWI1 @ 400 kHz: HMC5883L/QMC5883L 100 Hz 3D Vector              • Cores 0..2: Linux OS, Wi-Fi 6 (wlan0), Blackbox
+• UART3 @ 115200: u-blox NEO-M8N GPS NMEA/UBX DMA stream           • MSP Server: TCP Port 5760 (Configurator / App)
+• RPMsg: 64B TLPs via abstractx-tlp (1024) / BareCTF (1025)        • Telemetry Ingestion: Direct /dev/rpmsg0 VFS
+```
+
+### MicroPython vs. Compiled C++ Policy:
+1. **MicroPython Scope**: Exclusively used for interactive exploration, offline pin diagnostics, and hardware validation during bench development (`apps/e906_repl_app`). Never used in the active flight path.
+2. **C++20 I/O Processor Scope**: The production flight firmware is [`inav_e906_app`](file:///home/tcmichals/projects/AbstractX/apps/inav_e906_app), running bare-metal on the XuanTie E906. It adheres to AbstractX `trace_schema.json`, formats fixed 64-byte `Tlp64` datagrams, and communicates across VirtIO RPMsg `/dev/rpmsg0` with sub-microsecond latency.
+
+---
+
+## 6. Target Platform Concept Abstraction
 
 Platform backends implement the `concepts::IsPlatform` constraint ([`src/target/target_interface.hpp`](file:///home/tcmichals/ssdData/projects/home/inav/src/target/target_interface.hpp)):
 

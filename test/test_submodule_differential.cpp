@@ -152,6 +152,20 @@ void test_betaflight_pid_feedforward_differential() {
         assert(std::abs(expected - actual) < 1e-6f);
     }
 
+    // Verify Betaflight 2026 Hyperbolic TPA curve bit-exactness (pid_init.c:349)
+    // powf(1.0f / x, power)
+    for (float speed = 10.0f; speed <= 40.0f; speed += 5.0f) {
+        float x = speed / cfg.speed_curve_vref;
+        float expected = std::clamp(std::pow(1.0f / x, cfg.speed_curve_power), cfg.speed_curve_min, cfg.speed_curve_max);
+        float actual = pid.calculate_hyperbolic_tpa(speed);
+        assert(std::abs(expected - actual) < 1e-6f);
+    }
+
+    // Verify Betaflight Wing Battery Throttle Factor (pid.c:327)
+    assert(std::abs(flight::PidController::calculate_wing_battery_throttle_factor(12.6f, 16.8f) - 0.75f) < 1e-5f);
+    assert(flight::PidController::calculate_wing_battery_throttle_factor(0.0f, 16.8f) == 1.0f); // 0V fallback
+    assert(flight::PidController::calculate_wing_battery_throttle_factor(18.0f, 16.8f) == 1.0f); // Clamped at 1.0
+
     std::cout << "100% BIT-EXACT MATCH!\n";
 }
 

@@ -46,19 +46,22 @@ def parse_msp_v1(data: bytes):
     return cmd, payload
 
 def run_sitl_test():
+    host = sys.argv[1] if len(sys.argv) > 1 else '127.0.0.1'
+    port = int(sys.argv[2]) if len(sys.argv) > 2 else 5760
+
     print("=" * 60)
-    print(" INAV-ABSTRACTX SITL PYTHON TEST HARNESS")
+    print(f" INAV-ABSTRACTX SITL / HARDWARE MSP TEST ({host}:{port})")
     print("=" * 60)
 
-    # 1. Connect to SITL TCP Port 5760
+    # 1. Connect to MSP TCP Port
     sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     sock.settimeout(2.0)
     
     try:
-        sock.connect(('127.0.0.1', 5760))
-        print("Connected to SITL Simulator on 127.0.0.1:5760\n")
+        sock.connect((host, port))
+        print(f"Connected to Flight Controller on {host}:{port}\n")
     except Exception as e:
-        print(f"Error: Could not connect to SITL on 127.0.0.1:5760 ({e})")
+        print(f"Error: Could not connect to FC on {host}:{port} ({e})")
         print("Make sure ./build/inav_abstractx_sitl is running in another terminal!")
         sys.exit(1)
 

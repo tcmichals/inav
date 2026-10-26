@@ -122,6 +122,16 @@ struct MspLiveState {
     // RC Channels (16 microsecond PWM channels)
     std::array<uint16_t, 16> rc_channels{1500, 1500, 1000, 1500, 1000, 1000, 1000, 1000,
                                          1500, 1500, 1500, 1500, 1500, 1500, 1500, 1500};
+
+    // GPS
+    uint8_t  gps_fix{0};
+    uint8_t  gps_num_sats{0};
+    int32_t  gps_lat{0};
+    int32_t  gps_lon{0};
+    int16_t  gps_alt_m{0};
+    uint16_t gps_speed_cms{0};
+    uint16_t gps_ground_course{0};
+    uint16_t gps_hdop{9900};
 };
 
 // ---------------------------------------------------------------------------

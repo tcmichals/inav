@@ -7,16 +7,27 @@
 
 ## 1. Overview
 
-`inav-abstractx` is a C++20 flight controller implementing Betaflight rate PID control and INAV navigation algorithms partitioned across a heterogeneous hardware architecture:
-- **Cubie A5E SBC** (Allwinner A523 Octa-Core Cortex-A55 Linux `PREEMPT_RT` mission computer)
-- **Tang Nano 9K FPGA** (Gowin GW1NR-9 64-byte TLP hardware routing & sensor bridge)
-- **RP2350 Pico 2 / Pico 2 W** (Dual ARM Cortex-M33 / RISC-V Hazard3 real-time actuator & PIO engine)
-- **ESP32-P4-WIFI6 (Kit A / Slim)** (Dual RISC-V 400 MHz MIPI-CSI camera optical flow & Wi-Fi 6 telemetry engine)
-- **Linux Desktop SITL** (6-DOF multicopter software-in-the-loop simulation)
+`inav-abstractx` is a high-performance C++20 flight controller that unifies **INAV 3D autonomous navigation** with **Betaflight high-speed acro stick dynamics**. Powered by the **AbstractX C++20 API**, it completely eliminates legacy busy-waiting loops, blocking sleeps, and sequential register polling in favor of non-blocking stackless coroutines and 64-byte PCIe Transaction Layer Packets (`Tlp64`).
+
+The system is deployed uniformly across four heterogeneous hardware platforms:
+- **Allwinner Cubie A5E**: Linux `PREEMPT_RT` octa-core mission computer + RISC-V E906 co-processor via RPMsg.
+- **Raspberry Pi Pico 2 / Pico 2 W**: RP2350 dual Cortex-M33 real-time flight core with triple PIO hardware offloading (DShot, CRSF, Auto-SPI IMU burst).
+- **QMTECH Zynq-7020 (XC7Z020)**: Dual ARM Cortex-A9 + Xilinx Artix-7 FPGA fabric with single-cycle 64-byte parallel PCIe/AXI DMA streaming.
+- **ESP32-P4-WIFI6 (Kit A / Slim)**: Dual-core 400 MHz RISC-V companion with 2-lane MIPI-CSI 120 fps optical flow camera and Wi-Fi 6 telemetry.
+- **Linux Desktop SITL**: 6-DOF multicopter software-in-the-loop simulation with INAV Configurator TCP server (port 5760).
+
+> [!NOTE]
+> Upstream INAV's original documentation, setup instructions, and feature guide are preserved in [`docs/inav.md`](docs/inav.md).
 
 ---
 
-## 2. Architecture & Design Principles
+## 2. Architecture & AbstractX API Mandate
+
+### Zero Busy-Waiting Loops (`while/for` Register Elimination)
+All legacy synchronous loops (`while (!ready) poll()`, `delay_ms()`) are strictly eliminated. All sensor drivers and flight engines operate exclusively via non-blocking C++20 coroutines:
+- **`co_await tlp_channel.async_transaction(req)`**: Dispatches 64-byte PCIe TLPs over lock-free SPSC rings and suspends the coroutine ($<0.05\,\mu\text{s}$ swap) until hardware completion.
+- **`when_any(hardware_task, timeout_task)` (`||`)**: Watchdog racing prevents bus lockups and achieves minimum latency upon DMA return.
+- **`when_all(sensor1_init, sensor2_init)` (`&&`)**: Multi-sensor boot initialization executes in parallel, scaling total boot latency to $\max(\text{delays})$ instead of $\sum(\text{delays})$.
 
 ```
 +───────────────────────────────────────────────────────────────────────────────────────────+
@@ -141,9 +152,10 @@ Algorithms are ported from upstream C sources in [`external/inav/src/main/`](ext
 
 | Target Platform | Processor / Architecture | Peripherals & Interfaces | Role |
 | :--- | :--- | :--- | :--- |
-| **RP2350 Pico 2 / Pico 2 W** | Dual ARM Cortex-M33 / RISC-V Hazard3 (150 MHz) | PIO DShot600, SPI IMU DMA, I2C Baro/Mag, UART CRSF/ELRS receiver, CYW43439 Wi-Fi (MSP TCP 5760). | Embedded microcontroller flight controller & real-time actuator engine |
-| **ESP32-P4-WIFI6 (Kit A / Slim)** | Dual RISC-V HP cores (400 MHz) + Single RISC-V LP core (40 MHz) | High-speed SPI/DMA IMU, I2C Baro/Mag, UART CRSF/ELRS, 2-lane MIPI-CSI (120 fps optical flow ISP), 802.11ax Wi-Fi 6 & BT5 companion (MSP TCP 5760 / >50 Mbps CTF stream). | High-performance dual-core RISC-V vision & wireless companion |
-| **Cubie A5E + Tang Nano 9K FPGA** | Allwinner A523 Octa-Core Cortex-A55 + Gowin GW1NR-9 FPGA (8640 LUTs) | `PREEMPT_RT` Linux kernel (`SCHED_FIFO 99`), 64-byte TLP parallel hardware bridge, multi-IMU hardware voting, EKF state offload. | High-level mission computer & hardware sensor offload bridge |
+| **Allwinner Cubie A5E** | Octa-Core Cortex-A55 Linux `PREEMPT_RT` + RISC-V E906 (400 MHz) | RPMsg / VirtIO async channels, isolated CPU Core 3 (`SCHED_FIFO 99`), epoll peripheral manager. | High-level autonomous mission computer & coprocessor bridge |
+| **RP2350 Pico 2 / Pico 2 W** | Dual ARM Cortex-M33 (150 MHz) | PIO0 DShot150..1200, PIO1 CRSF RX, PIO2 Auto-SPI IMU burst DMA, CYW43439 Wi-Fi (MSP TCP 5760). | Real-time flight control loop (8 kHz) & PIO actuator engine |
+| **QMTECH Zynq-7020 (XC7Z020)** | Dual ARM Cortex-A9 (667–800 MHz) + Artix-7 FPGA (85K logic cells) | Single-cycle 64-byte parallel AXI-HP DMA mailboxes, multi-IMU hardware voting, zero-CPU bus offload. | High-throughput FPGA DMA bridge & sensor coprocessor |
+| **ESP32-P4-WIFI6 (Kit A / Slim)** | Dual-Core RISC-V HP (400 MHz) + Single-Core LP (40 MHz) | 2-lane MIPI-CSI (120 fps optical flow ISP), high-speed SPI/DMA IMU, 802.11ax Wi-Fi 6 (>50 Mbps CTF stream). | High-performance vision pipeline & wireless telemetry companion |
 | **Linux Desktop SITL** | x86_64 / ARM64 Linux Host | 6-DOF multicopter dynamics simulation, TCP 5760 MSP Configurator interface, UDP telemetry stream. | Software-in-the-Loop simulation & testing |
 
 ---
@@ -233,7 +245,12 @@ python3 tools/ctf_to_blackbox.py
 
 ## 8. Documentation Index
 
-- [`docs/INAV_PORTING_MASTER_PLAN.md`](docs/INAV_PORTING_MASTER_PLAN.md): Subsystem porting checklist and upstream mapping tracker.
+- [`docs/inav.md`](docs/inav.md): Upstream INAV original documentation, setup instructions, and feature guide.
+- [`docs/TARGET_HARDWARE_PLATFORMS.md`](docs/TARGET_HARDWARE_PLATFORMS.md): Detailed hardware architecture and zero-loop AbstractX execution model across Cubie A5E, Pico 2 W, QMTECH Zynq-7020, and ESP32-P4.
+- [`docs/INAV_PORTING_MASTER_PLAN.md`](docs/INAV_PORTING_MASTER_PLAN.md): Persistent subsystem porting checklist and upstream mapping tracker.
+- [`docs/ENGINEERING_LOG.md`](docs/ENGINEERING_LOG.md): Architectural decisions, hardware facts, and engineering change chronicle.
+- [`CLAUDE.md`](CLAUDE.md): Multi-agent pairing guide, build/test commands, and safety rules for Claude Code.
+- [`.agents/skills/`](.agents/skills/): Antigravity / agy skills (`inav-parity-validation`, `engineering-log`).
 - [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md): System architecture, coroutine execution model, TLP bus protocol, and memory layouts.
 - [`docs/HARDWARE_DRIVERS.md`](docs/HARDWARE_DRIVERS.md): Peripheral driver catalog and coroutine lifecycle.
 - [`docs/TARGET_PICO2.md`](docs/TARGET_PICO2.md): RP2350 board layout, PIO allocation, and pin assignments.

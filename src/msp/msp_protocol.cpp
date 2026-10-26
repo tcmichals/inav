@@ -260,14 +260,14 @@ bool MspEngine::process_command(Cmd cmd,
         // ---- Navigation ----
 
         case Cmd::RawGps:
-            tx_frame.push_u8(1);    // Fix 3D
-            tx_frame.push_u8(12);   // 12 satellites
-            tx_frame.push_u32(377749000);  // Lat
-            tx_frame.push_u32(4070773296U); // Lon (-1224194000)
-            tx_frame.push_u16(10);  // Alt (m)
-            tx_frame.push_u16(0);   // Speed (cm/s)
-            tx_frame.push_u16(0);   // Course
-            tx_frame.push_u16(120); // HDOP 1.20
+            tx_frame.push_u8(live.gps_fix);
+            tx_frame.push_u8(live.gps_num_sats);
+            tx_frame.push_u32(static_cast<uint32_t>(live.gps_lat));
+            tx_frame.push_u32(static_cast<uint32_t>(live.gps_lon));
+            tx_frame.push_u16(static_cast<uint16_t>(live.gps_alt_m));
+            tx_frame.push_u16(live.gps_speed_cms);
+            tx_frame.push_u16(live.gps_ground_course);
+            tx_frame.push_u16(live.gps_hdop);
             return true;
 
         case Cmd::SetRawGps:

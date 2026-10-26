@@ -14,6 +14,7 @@
  */
 
 #include "pico2_target.hpp"
+#include "pio_imu_reader.hpp"
 #include "config_registry.hpp"
 #include "bus_concepts.hpp"
 #include <chrono>

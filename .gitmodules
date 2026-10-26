@@ -4,3 +4,6 @@
 [submodule "external/betaflight"]
 	path = external/betaflight
 	url = https://github.com/betaflight/betaflight.git
+[submodule "external/AbstractX"]
+	path = external/AbstractX
+	url = https://github.com/tcmichals/AbstractX.git

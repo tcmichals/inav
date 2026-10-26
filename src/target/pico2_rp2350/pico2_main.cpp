@@ -30,6 +30,7 @@
 #include "config_registry.hpp"
 #include "bus_concepts.hpp"
 #include "pico2_target.hpp"
+#include "pio_imu_reader.hpp"
 #include "imu_base.hpp"
 #include "icm42688p.hpp"
 #include "bmp280.hpp"
@@ -42,12 +43,12 @@
 using namespace abstractx;
 
 // ---------------------------------------------------------------------------
-// Global SPSC rings: bottom-half sensor loops push, top-half engine pops.
-// Sized for RP2350 520 KB SRAM (g_logging_ring retains 64 frames = 4 KB
+// Dedicated Point-to-Point SPSC Channels (Strictly 1 Producer : 1 Consumer)
+// Sized for RP2350 520 KB SRAM (g_logging_channel retains 64 frames = 4 KB
 // of boot diagnostics and calibration before TCP client attaches).
 // ---------------------------------------------------------------------------
-static SpscTlpRing<64u> g_telemetry_ring;
-static SpscTlpRing<64u> g_logging_ring;
+static DedicatedSpscChannel<64u> g_telemetry_ring;
+static DedicatedSpscChannel<64u> g_logging_ring;
 
 // ---------------------------------------------------------------------------
 // Singleton driver instances (constructed from SensorConfig)
@@ -81,14 +82,26 @@ void core1_flight_loop_entry() {
     drivers::baro::Bmp280Driver<drivers::bus::Pico2I2cBus>   baro_driver{baro_bus, sc.baro_i2c_addr};
 
     // -----------------------------------------------------------------------
-    // Stage 1: Init sensors — non-blocking coroutine async_init
+    // Stage 1: Init sensors — concurrent parallel boot via when_all
     // -----------------------------------------------------------------------
     {
         auto imu_init_task = imu_driver.async_init();
-        imu_init_task.resume();
         auto baro_init_task = baro_driver.async_init();
-        baro_init_task.resume();
+        auto boot_join = when_all(std::move(imu_init_task), std::move(baro_init_task));
+        while (!boot_join.await_ready()) {
+            ::sleep_ms(1u);
+        }
     }
+
+    // Configure Hardware PIO Auto-DMA IMU streaming into g_telemetry_ring
+    target::pico2::PioImuConfig pio_cfg{};
+    pio_cfg.spi_sck_pin  = sc.imu_spi.sck_pin;
+    pio_cfg.spi_mosi_pin = sc.imu_spi.mosi_pin;
+    pio_cfg.spi_miso_pin = sc.imu_spi.miso_pin;
+    pio_cfg.spi_cs_pin   = sc.imu_spi.cs_pin;
+    pio_cfg.drdy_pin     = sc.imu_spi.drdy_pin;
+    pio_cfg.baud_hz      = sc.imu_spi.baud_hz;
+    (void)target::pico2::PioImuReader::init(pio_cfg, g_telemetry_ring);
 
     // -----------------------------------------------------------------------
     // Stage 2: Launch concurrent sensor sample loops

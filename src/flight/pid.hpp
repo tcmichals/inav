@@ -96,6 +96,12 @@ struct PidConfig {
     float tpa_breakpoint{0.5f}; // Throttle threshold (0.0 to 1.0)
     float tpa_rate{0.20f};       // Gain reduction fraction above breakpoint
 
+    // Hyperbolic TPA Speed Curve Settings (Betaflight 4.5+ / 2026 Wings & Speed TPA)
+    float speed_curve_vref{20.0f};      // Reference airspeed (m/s) with nominal PID gains
+    float speed_curve_power{2.0f};      // Hyperbolic curve exponent (power * 0.1, default 2.0)
+    float speed_curve_min{0.25f};       // Minimum allowable attenuation factor (* 0.01)
+    float speed_curve_max{2.00f};       // Maximum allowable boost factor (* 0.01)
+
     // D-Term Filter Cutoff Frequencies (Hz)
     float dterm_lpf1_hz{100.0f};
     float dterm_lpf2_hz{200.0f};
@@ -185,6 +191,30 @@ public:
         const float e = config_.thrust_linearization;
         if (e <= 0.0f) return throttle;
         return throttle * (1.0f - e * (1.0f - throttle));
+    }
+
+    // -------------------------------------------------------------------------
+    // Hyperbolic TPA Speed Curve (Betaflight pid_init.c:349)
+    // -------------------------------------------------------------------------
+    [[nodiscard]] float calculate_hyperbolic_tpa(float airspeed_ms) const noexcept {
+        if (config_.speed_curve_vref <= 0.1f || airspeed_ms <= 0.1f) {
+            return 1.0f;
+        }
+        const float x = airspeed_ms / config_.speed_curve_vref;
+        const float factor = std::pow(1.0f / x, config_.speed_curve_power);
+        return std::clamp(factor, config_.speed_curve_min, config_.speed_curve_max);
+    }
+
+    // -------------------------------------------------------------------------
+    // Wing Battery Throttle Factor (Betaflight pid.c:327)
+    // -------------------------------------------------------------------------
+    [[nodiscard]] static constexpr float calculate_wing_battery_throttle_factor(
+        float measured_voltage_v, float max_voltage_v) noexcept {
+        if (max_voltage_v > 0.0f && measured_voltage_v > 0.0f) {
+            const float factor = measured_voltage_v / max_voltage_v;
+            return (factor < 0.0f) ? 0.0f : (factor > 1.0f ? 1.0f : factor);
+        }
+        return 1.0f;
     }
 
     // -------------------------------------------------------------------------

@@ -18,12 +18,17 @@
 #include "dps310.hpp"
 #include "gps_driver.hpp"
 
+#include "abstractx/reactor/epoll_reactor.hpp"
+#include "abstractx/reactor/async_socket.hpp"
+
 
 #include <iostream>
 #include <csignal>
 #include <atomic>
 #include <thread>
 #include <chrono>
+#include <poll.h>
+#include <fcntl.h>
 
 using namespace abstractx;
 
@@ -34,6 +39,7 @@ static SpscTlpRing<64> g_logging_ring;
 static drivers::gps::GpsDriver g_gps_driver;
 static msp::MspServer<msp::PosixTcpTransport> g_msp_server{5760};
 static logging::BlackboxLogger g_blackbox_logger;
+static msp::MspLiveState g_msp_live_state;
 
 // Minimal Dummy SBC Target for FlightEngine concept
 struct LinuxSbcTarget {
@@ -63,6 +69,80 @@ int main() {
     // 3. Start Blackbox Logger Thread (Core 0)
     g_blackbox_logger.start(g_logging_ring, "blackbox");
 
+    // 4. Start Hardware TLP Telemetry Ingestion Receiver (VirtIO RPMsg /dev/rpmsg0 + UDP 9870)
+    std::thread tlp_receiver([&]() {
+        int rpmsg_fd = ::open("/dev/rpmsg0", O_RDWR | O_NONBLOCK);
+        if (rpmsg_fd >= 0) {
+            const char hello[] = "helo";
+            (void)::write(rpmsg_fd, hello, 4);
+            std::cout << "[INAV SBC] Connected directly to XuanTie E906 VirtIO RPMsg (/dev/rpmsg0)\n";
+        }
+
+        int sock = socket(AF_INET, SOCK_DGRAM, 0);
+        if (sock >= 0) {
+            sockaddr_in addr{};
+            addr.sin_family = AF_INET;
+            addr.sin_addr.s_addr = INADDR_ANY;
+            addr.sin_port = htons(9870);
+            int opt = 1;
+            setsockopt(sock, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt));
+            bind(sock, reinterpret_cast<struct sockaddr*>(&addr), sizeof(addr));
+        }
+
+        std::array<pollfd, 2> pfds{};
+        int nfds = 0;
+        int rpmsg_idx = -1;
+        int sock_idx = -1;
+
+        if (rpmsg_fd >= 0) {
+            rpmsg_idx = nfds;
+            pfds[nfds].fd = rpmsg_fd;
+            pfds[nfds].events = POLLIN;
+            nfds++;
+        }
+        if (sock >= 0) {
+            sock_idx = nfds;
+            pfds[nfds].fd = sock;
+            pfds[nfds].events = POLLIN;
+            nfds++;
+        }
+
+        uint8_t buf[512];
+        while (g_system_running.load(std::memory_order_relaxed)) {
+            if (nfds == 0) {
+                std::this_thread::sleep_for(std::chrono::milliseconds(50));
+                continue;
+            }
+            int ret = poll(pfds.data(), static_cast<nfds_t>(nfds), 50);
+            if (ret <= 0) continue;
+
+            // 1. Direct VirtIO RPMsg packets from XuanTie E906 Co-Processor
+            if (rpmsg_idx >= 0 && (pfds[rpmsg_idx].revents & POLLIN)) {
+                ssize_t n = ::read(rpmsg_fd, buf, sizeof(buf));
+                if (n > 0 && (n % 64 == 0)) {
+                    for (ssize_t off = 0; off < n; off += 64) {
+                        Tlp64 tlp{};
+                        std::memcpy(&tlp.wire, &buf[off], sizeof(asp_tlp64_t));
+                        (void)g_telemetry_ring.push(tlp);
+                    }
+                }
+            }
+
+            // 2. UDP 9870 fallback packets (SITL simulation / bench)
+            if (sock_idx >= 0 && (pfds[sock_idx].revents & POLLIN)) {
+                ssize_t n = recv(sock, buf, sizeof(buf), 0);
+                if (n == static_cast<ssize_t>(sizeof(asp_tlp64_t))) {
+                    Tlp64 tlp{};
+                    std::memcpy(&tlp.wire, buf, sizeof(asp_tlp64_t));
+                    (void)g_telemetry_ring.push(tlp);
+                }
+            }
+        }
+
+        if (rpmsg_fd >= 0) ::close(rpmsg_fd);
+        if (sock >= 0) ::close(sock);
+    });
+
     std::cout << "Linux SBC Flight Engine Running (PCIe BAR + SCHED_FIFO Core 3).\n";
 
     LinuxSbcTarget sbc_target{};
@@ -78,12 +158,39 @@ int main() {
     
     while (g_system_running.load(std::memory_order_relaxed)) {
         engine_task.resume();
+
+        // Feed MSP live state each flight loop cycle
+        const auto& ahrs_angles = sbc_engine.ahrs_imu().angles();
+        const auto& pos_state = sbc_engine.pos_estimator().state();
+        const auto& gps_sample = g_gps_driver.latest_sample();
+
+        g_msp_live_state.roll_decideg  = ahrs_angles.roll_decideg;
+        g_msp_live_state.pitch_decideg = ahrs_angles.pitch_decideg;
+        g_msp_live_state.yaw_deg       = static_cast<int16_t>(ahrs_angles.yaw_deg);
+        g_msp_live_state.altitude_cm   = static_cast<int32_t>(-pos_state.pos_d_m * 100.0f);
+        g_msp_live_state.vario_cms     = static_cast<int16_t>(-pos_state.vel_d_m_s * 100.0f);
+        g_msp_live_state.cycle_time_us = 1000;
+        g_msp_live_state.sensor_flags  = 0x31; // ACC | BARO | GPS
+
+        g_msp_live_state.gps_lat       = gps_sample.latitude_1e7;
+        g_msp_live_state.gps_lon       = gps_sample.longitude_1e7;
+        g_msp_live_state.gps_alt_m     = static_cast<int16_t>(gps_sample.altitude_cm / 100);
+        g_msp_live_state.gps_speed_cms = static_cast<uint16_t>(gps_sample.vel_n_cms);
+        g_msp_live_state.gps_ground_course = gps_sample.ground_course_decideg;
+        g_msp_live_state.gps_num_sats  = gps_sample.num_sats;
+        g_msp_live_state.gps_fix       = (gps_sample.fix_type != drivers::gps::GpsFixType::NoFix) ? 1 : 0;
+
+        g_msp_server.update_live_state(g_msp_live_state);
+
         std::this_thread::sleep_for(std::chrono::milliseconds(1));
     }
 
     sbc_engine.stop();
     g_msp_server.stop();
     g_blackbox_logger.stop();
+    if (tlp_receiver.joinable()) {
+        tlp_receiver.join();
+    }
 
     std::cout << "Linux SBC Flight Engine Stopped Cleanly.\n";
     return 0;

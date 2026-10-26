@@ -33,17 +33,20 @@ else()
 endif()
 
 # Locate Canonical AbstractX Header Directory
-set(ABSTRACTX_PATH "${CMAKE_CURRENT_SOURCE_DIR}/../AbstractX" CACHE PATH "Path to AbstractX repository")
-
-if(NOT EXISTS "${ABSTRACTX_PATH}/include/asp_tlp64.hpp")
-    if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/include/asp_tlp64.hpp")
-        set(ABSTRACTX_PATH "${CMAKE_CURRENT_SOURCE_DIR}")
-        message(STATUS "Using local AbstractX headers at: ${ABSTRACTX_PATH}/include")
-    else()
-        message(FATAL_ERROR "AbstractX headers not found at ${ABSTRACTX_PATH}/include. Please set ABSTRACTX_PATH.")
-    endif()
-else()
+if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/../../AbstractX/include/asp_tlp64.hpp")
+    set(ABSTRACTX_PATH "${CMAKE_CURRENT_SOURCE_DIR}/../../AbstractX" CACHE PATH "Path to AbstractX repository" FORCE)
     message(STATUS "Found canonical AbstractX headers at: ${ABSTRACTX_PATH}/include")
+elseif(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/external/AbstractX/include/asp_tlp64.hpp")
+    set(ABSTRACTX_PATH "${CMAKE_CURRENT_SOURCE_DIR}/external/AbstractX" CACHE PATH "Path to AbstractX repository" FORCE)
+    message(STATUS "Found AbstractX submodule headers at: ${ABSTRACTX_PATH}/include")
+elseif(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/../AbstractX/include/asp_tlp64.hpp")
+    set(ABSTRACTX_PATH "${CMAKE_CURRENT_SOURCE_DIR}/../AbstractX" CACHE PATH "Path to AbstractX repository" FORCE)
+    message(STATUS "Found canonical AbstractX headers at: ${ABSTRACTX_PATH}/include")
+elseif(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/include/asp_tlp64.hpp")
+    set(ABSTRACTX_PATH "${CMAKE_CURRENT_SOURCE_DIR}")
+    message(STATUS "Using local AbstractX headers at: ${ABSTRACTX_PATH}/include")
+else()
+    message(FATAL_ERROR "AbstractX headers not found. Please initialize external/AbstractX submodule or set ABSTRACTX_PATH.")
 endif()
 
 # Include Directories
@@ -75,8 +78,10 @@ include_directories(
     "${CMAKE_CURRENT_SOURCE_DIR}/src/target/linux_common"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/target/sitl"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/target/pico2_rp2350"
+    "${CMAKE_CURRENT_SOURCE_DIR}/include"
     "${ABSTRACTX_PATH}/include"
-
+    "${ABSTRACTX_PATH}/targets/linux/include"
+    "${ABSTRACTX_PATH}/third_party/etl/include"
 )
 
 
@@ -126,6 +131,8 @@ if(PICO_BOARD OR BUILD_PICO2)
         hardware_flash
         hardware_gpio
         hardware_timer
+        hardware_pio
+        hardware_dma
     )
 
     pico_add_extra_outputs(inav_pico2_imu_test)

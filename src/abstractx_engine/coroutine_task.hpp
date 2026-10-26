@@ -340,7 +340,7 @@ template <typename... Tasks>
 struct WhenAllAwaiter {
     std::tuple<Tasks...> tasks;
 
-    constexpr explicit WhenAllAwaiter(Tasks... t) noexcept : tasks(t...) {}
+    constexpr explicit WhenAllAwaiter(Tasks&&... t) noexcept : tasks(std::forward<Tasks>(t)...) {}
 
     bool await_ready() noexcept {
         std::apply([](auto&... t) {
@@ -374,7 +374,7 @@ struct WhenAnyAwaiter {
     std::tuple<Tasks...> tasks;
     size_t winner_index{0};
 
-    constexpr explicit WhenAnyAwaiter(Tasks... t) noexcept : tasks(t...) {}
+    constexpr explicit WhenAnyAwaiter(Tasks&&... t) noexcept : tasks(std::forward<Tasks>(t)...) {}
 
     bool await_ready() noexcept {
         size_t idx = 0;

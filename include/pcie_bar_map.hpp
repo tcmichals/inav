@@ -22,8 +22,9 @@ namespace bar {
     static constexpr uint32_t DisplayBase   = 0x7000u;
     static constexpr uint32_t LedBase       = 0x8000u;
     static constexpr uint32_t PowerBase     = 0x9000u;
-    static constexpr uint32_t PitotBase     = 0xA000u;
-    static constexpr uint32_t TelemetryBase = 0xB000u;
+    static constexpr uint32_t PitotBase       = 0xA000u;
+    static constexpr uint32_t TelemetryBase   = 0xB000u;
+    static constexpr uint32_t OpticalFlowBase = 0xC000u;
 } // namespace bar
 
 namespace reg {

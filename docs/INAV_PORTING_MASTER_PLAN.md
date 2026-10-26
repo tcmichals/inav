@@ -1,8 +1,8 @@
 # INAV & Betaflight C++20 Master Porting & Parity Plan
 
 > **Official Submodule References**:
-> - Upstream INAV: [`external/inav/src/main/`](../external/inav/src/main/)
-> - Upstream Betaflight: [`external/betaflight/src/main/`](../external/betaflight/src/main/)
+> - Upstream INAV: [`external/inav/src/main/`](../external/inav/src/main/) (Synchronized with 9.1 / 10.x `940b9281b` / `bc76329fc`)
+> - Upstream Betaflight: [`external/betaflight/src/main/`](../external/betaflight/src/main/) (Synchronized with `d593400a0`)
 > - Validation Suite: `python3 tools/run_all_validations.py`
 
 This document is the persistent, step-by-step master checklist and architectural reference for porting all upstream INAV and Betaflight flight control, sensor fusion, filtering, navigation, and communication systems to high-performance C++20 with 100% bit-exact mathematical parity.
@@ -33,7 +33,7 @@ This document is the persistent, step-by-step master checklist and architectural
 | **1.18** | **Battery ADC & Energy Monitor** | `external/inav/src/main/sensors/battery.c`<br>`external/betaflight/src/main/sensors/battery.c` | [`src/sensors/battery_monitor.hpp`](../src/sensors/battery_monitor.hpp) | `COMPLETE` | `TEST 19/19` in `run_unit_tests` |
 | **1.19** | **Sensor Auto-Detection & Displays** | `external/inav/src/main/drivers/display/` | [`src/drivers/sensor_detector.hpp`](../src/drivers/sensor_detector.hpp)<br>[`oled_ssd1306.hpp`](../src/drivers/display/oled_ssd1306.hpp)<br>[`osd_max7456.hpp`](../src/drivers/display/osd_max7456.hpp) | `COMPLETE` | `TEST 18/19` in `run_unit_tests` |
 | **1.20** | **Cubie A5E Linux SBC Transport** | `external/inav/src/main/target/` | [`src/target/linux_common/linux_fpga_transport.hpp`](../src/target/linux_common/linux_fpga_transport.hpp) | `COMPLETE` | `TEST 19/19` in `run_unit_tests` |
-| **1.21** | **ESP32-P4 MIPI-CSI Camera Optical Flow** | `external/inav/src/main/sensors/opflow.c` | [`src/sensors/optical_flow.hpp`](../src/sensors/optical_flow.hpp) | `PLANNED` | Visual-inertial velocity tracking ($\Delta x, \Delta y$ @ 120 fps) |
+| **1.21** | **ESP32-P4 MIPI-CSI Camera Optical Flow** | `external/inav/src/main/sensors/opflow.c` | [`src/sensors/optical_flow.hpp`](../src/sensors/optical_flow.hpp) | `COMPLETE` | `TEST 19/20` in `run_unit_tests` |
 | **1.22** | **Tang Nano 9K FPGA 64B TLP Bridge** | `external/inav/src/main/target/` | [`src/target/linux_common/tang9k_fpga_transport.hpp`](../src/target/linux_common/tang9k_fpga_transport.hpp) | `PLANNED` | Gowin GW1NR-9 64-byte parallel TLP bus bridge |
 
 ---
@@ -75,6 +75,14 @@ This document is the persistent, step-by-step master checklist and architectural
   * Phase lead compensation for low-pass filter group delay.
 - [x] **Port Wind & RTH Estimator** (`src/flight/wind_estimator.hpp`):
   * Earth-frame horizontal wind velocity estimation from airspeed / groundspeed delta.
+- [x] **Event-Driven Asynchronous TLP Demultiplexer** (`src/flight/flight_engine_template.hpp`):
+  * Full BAR-addressed demuxing (`bar::ImuBase`, `bar::BaroBase`, `bar::GpsBase`, `bar::MagBase`, `bar::PitotBase`).
+  * 3D Magnetometer field vector fusion into INAV Mahony AHRS filter.
+  * Pitot dynamic differential pressure airspeed ingestion into `WindEstimator`.
+  * Complete elimination of synchronous 10:1 loop decimation.
+- [x] **Hardware Auto-DMA & Structured Concurrent Boot** (`src/target/pico2_rp2350/pio_imu_reader.hpp`, `pico2_main.cpp`):
+  * Autonomous PIO state machine DRDY latching and DMA streaming directly into `SpscTlpRing<64>`.
+  * Concurrent parallel boot initialization (`co_await when_all(imu_init, baro_init)`).
 
 ---
 
