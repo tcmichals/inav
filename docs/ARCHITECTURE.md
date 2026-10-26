@@ -36,20 +36,19 @@
 
 ---
 
-## 2. AbstractX TLP Virtual Bus: Flexible Software Sizing & FPGA 64-Byte Padding Rule
+## 2. AbstractX TLP Virtual Bus: Unified 64-Byte (512-bit) TLP Standard
 
 > [!IMPORTANT]
-> **DESIGN RULE: FLEXIBLE SOFTWARE SIZING & FPGA 64-BYTE PADDING**
-> * **Linux & Microcontrollers**: In software, TLP packet lengths are flexible and sized to match the exact peripheral payload requirements (e.g. 16B for Baro, 32B for IMU, 40B for RC), minimizing SRAM consumption and `memcpy` cycle overhead.
-> * **FPGA Hardware Boundary**: When packets cross into or out of the FPGA / PCIe hardware domain (512-bit AXI4-Stream bus), software pads incoming/outgoing packets to exactly **64 bytes (512 bits)**.
+> **DESIGN RULE: UNIFIED 64-BYTE (512-BIT) TLP STANDARD**
+> * **Unified Datagram Across Domains**: Software (Linux SBC, microcontrollers) and hardware (FPGA PL, PCIe endpoints) standardize strictly on the unified 64-byte (512-bit) `asp_tlp64_t` packet format.
+> * **Hardware-Native Efficiency**: Exactly fits ARM Cortex-A55 and Cortex-A9 64-byte cache lines (~80 ns copy), packs exactly eight frames per 512-byte VirtIO RPMsg buffer with zero fragmentation, and maps directly into QMTECH Zynq-7020 dual 8 KiB PL BRAM FIFOs (`asp_axi_lite_bridge.sv` via `M_AXI_GP0` / `/dev/uio0`).
 
 ### Memory & Header Layout:
 ```
 Byte 0..3:   Header (Type, Length, Device ID, Target BAR)
 Byte 4..11:  64-bit Hardware Nanosecond Timestamp (timestamp_ns)
 Byte 12..15: Address Offset / Register Base
-Byte 16..N:  Variable Payload Data (Exact bytes needed: 8B..48B)
-[Byte N..63: Zero-padding applied only at FPGA / 512-bit PCIe boundary]
+Byte 16..63: Payload Data (Sensor samples, actuator setpoints, configuration, or telemetry)
 ```
 
 ### Virtual Base Address Register (BAR) Map:
@@ -436,7 +435,7 @@ For high-end autonomous drones, computer vision, and AI companion platforms, `in
                                               │
                                               ▼
 +───────────────────────────────────────────────────────────────────────────────────────────+
-|                         FPGA REAL-TIME OFFLOADER (Artix-7 / Lattice / Gowin)              |
+|                         FPGA REAL-TIME OFFLOADER (QMTECH Zynq-7020 / Artix-7)             |
 +───────────────────────────────────────────────────────────────────────────────────────────+
 | • PCIe Endpoint & DMA Master : Writes 64B sensor TLPs directly into Host RAM (0% CPU)     |
 | • Hardware Nanosecond Clock  : Latches timestamp_ns on exact IMU DRDY clock cycle (<20ns) |

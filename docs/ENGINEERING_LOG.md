@@ -505,6 +505,32 @@ This engineering log records design decisions, hardware trade-offs, architectura
   - Full master validation suite (`python3 tools/run_all_validations.py`): All 8 steps passed 100%.
   - `pico2_hw_test`: Executed with code 0.
 
+---
+
+### [2026-10-25] Unified 64-Byte TLP Wire Standard & Zynq-7020 / Tang 20K FPGA Architecture Parity
+- **Category**: `architecture` / `documentation-parity`
+- **Decision**:
+  1. Deprecated obsolete Gowin Tang Nano 9K variable-length TLP documentation across all documentation and specification files.
+  2. Aligned `tcmichals/inav` with AbstractX production architecture: strictly unified 64-byte (512-bit) `asp_tlp64_t` wire standard across software and hardware.
+  3. Formally documented both production FPGA profiles:
+     - **QMTECH Zynq-7020 (XC7Z020)**: Integrated PS+PL offload via dual 8 KiB PL BRAM packet FIFOs mapped at `0x4000_0000` via `M_AXI_GP0` and `/dev/uio0` with `IRQ_F2P[0]`.
+     - **Sipeed Tang Nano 20K / Primer 20K (Gowin GW2A-18)**: External companion FPGA paired with Radxa Cubie A5E via 5-wire Dual-SPI + `INT_REQ` doorbell GPIO interrupt.
+  4. Updated `.agents/AGENTS.md` Rule 1, `docs/INAV_PORTING_MASTER_PLAN.md` (Row 1.22 & Section 2), `docs/ARCHITECTURE.md` (Section 2 & 7), `README.md` (Section 3.3), and `TODO.md`.
+- **Rationale**:
+  1. Variable-length TLP inside software rings caused packet fragmentation and unnecessary protocol translation overhead at the FPGA boundary.
+  2. Unified 64-byte datagram matches ARM Cortex-A55 / Cortex-A9 64-byte cache lines (~80 ns copy), packs exactly eight frames per 512-byte VirtIO RPMsg buffer, and directly maps to 512-bit wide FPGA Block RAM and AXI streaming fabrics.
+  3. Tang Nano 9K (8,640 LUT4) ran out of logic margin for incremental CRC and PWM capture; Tang Nano 20K (20,736 LUT4) fits the full `asp_top.sv` fabric with 78% headroom at 121.85 MHz Fmax.
+- **Files Modified**:
+  - `.agents/AGENTS.md`
+  - `docs/INAV_PORTING_MASTER_PLAN.md`
+  - `docs/ARCHITECTURE.md`
+  - `README.md`
+  - `TODO.md`
+  - `docs/ENGINEERING_LOG.md`
+- **Verification Evidence**:
+  - `python3 tools/run_all_validations.py`: Full master validation suite execution.
+
+
 
 
 

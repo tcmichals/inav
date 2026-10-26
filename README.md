@@ -48,7 +48,8 @@ All legacy synchronous loops (`while (!ready) poll()`, `delay_ms()`) are strictl
 │  - Consumes TLP requests from the outbound ring buffer                                    │
 │  - Routes requests by BAR address to target hardware backend:                             │
 │      ├── Cubie A5E Linux SBC (Allwinner A523 Octa-Core Cortex-A55 PREEMPT_RT)             │
-│      ├── Tang Nano 9K FPGA (Gowin GW1NR-9 64-byte TLP parallel hardware bridge)          │
+│      ├── QMTECH Zynq-7020 FPGA (XC7Z020 64-byte BRAM AXI-Lite /dev/uio0 bridge)          │
+│      ├── Sipeed Tang Nano 20K / Primer 20K (GW2A-18 Dual-SPI 64-byte TLP offloader)       │
 │      ├── RP2350 PIO State Machines & DMA (PioImuReader, DShot PIO, CRSF PIO)               │
 │      ├── ESP32-P4 Dual-Core RISC-V DMA, MIPI-CSI ISP & Wi-Fi 6 Companion Transport       │
 │      ├── Microcontroller SPI / I2C / UART HAL                                             │
@@ -112,19 +113,19 @@ $$\text{Concurrent Startup (`when_all`):} \quad T_{\text{boot}} = \max_{i=1}^N(T
 
 ---
 
-### 3.3 Why Variable-Length TLP on MCU vs. Fixed 64-Byte on Tang 9K FPGA?
+### 3.3 Unified 64-Byte (512-bit) TLP Standard & QMTECH Zynq-7020 BRAM Architecture
 
-The Transaction Layer Packet (TLP) abstraction decouples high-level flight dynamics from physical bus hardware (SPI, I2C, UART, PIO, PCIe, AXI DMA). However, memory constraints and bus architectures differ across hardware targets:
+The Transaction Layer Packet (`Tlp64`) abstraction decouples high-level flight dynamics from physical bus hardware (SPI, I2C, UART, PIO, PCIe, AXI DMA). Rather than maintaining fragmented variable-length packet formats across targets, AbstractX enforces a **strictly unified 64-byte (512-bit) wire format** everywhere:
 
-#### Microcontroller Domain (RP2350 Pico 2 / Pico 2 W, ESP32-P4 Slim)
-- **SRAM Constraints**: Microcontrollers have tightly constrained internal memory (520 KB SRAM on RP2350, 768 KB L2 SRAM on ESP32-P4).
-- **Payload Characteristics**: Most sensor register transactions transfer 1 to 6 bytes (e.g., 1-byte register writes or 6-byte IMU gyro/accel burst reads).
-- **Ring Buffer Efficiency**: Enforcing fixed 64-byte allocations for every internal software ring transaction would waste SRAM and increase CPU memory-copy overhead across internal buses. Therefore, software internal ring buffers use compact, variable-length TLP payloads (header + $N$-byte payload) routed through point-to-point `SpscTlpChannel`s or atomic `MpscEventQueue`s.
+#### Unified 64-Byte Wire Protocol (`asp_tlp64.hpp`)
+* **Exact Cache-Line Fit**: 64 bytes aligns perfectly with the ARM Cortex-A55 (Cubie A5E) and Cortex-A9 (Zynq-7000) L1/L2 cache-line width, enabling single-burst 64-byte memory copies (~80 ns) with zero unaligned shifts.
+* **Deterministic RPMsg Packing**: 512-byte VirtIO RPMsg buffers hold exactly eight 64-byte TLPs with zero ring fragmentation or buffer waste.
+* **Hardware Interoperability**: Software, microcontrollers, and FPGA switch fabrics share the exact same binary struct layout (`sizeof(asp_tlp64_t) == 64`) with zero serialization or translation penalty.
 
-#### Hardware FPGA / Tang 9K Domain (Gowin GW1NR-9)
-- **Wide Parallel Datapaths**: The Tang Nano 9K FPGA uses synchronous parallel internal buses and Block RAM FIFOs (26 B-SRAM blocks, 468 Kbits total, 64 Mbit PSRAM).
-- **Deterministic Ingestion**: Fixed 64-byte alignment enables single-cycle hardware DMA ingestion and fixed-pipeline packet parsing without complex variable-length byte-realignment state machines or multi-cycle unaligned shifts.
-- **Boundary Translation**: When crossing into or out of the Tang 9K FPGA or Cubie A5E PCIe/DMA boundaries, the software transport layer pads outbound packets to 64 bytes (512 bits) and strips padding from inbound completions.
+#### QMTECH Zynq-7020 & Tang Nano 20K FPGA Offload Profiles
+The FPGA offload engine operates under two hardware profiles using the same unified 64-byte TLP format:
+* **QMTECH Zynq-7020 (XC7Z020)**: Implements dual 8 KiB PL BRAM FIFOs (`asp_axi_lite_bridge.sv`) mapped into PS address space at `0x4000_0000` via `M_AXI_GP0` and `/dev/uio0` with `IRQ_F2P[0]`. `asp_router.sv` switches 64-byte packets in a single cycle between BRAM, autonomous 8 kHz IMU SPI master, 4-ch DShot300/600, and nanosecond timer.
+* **Sipeed Tang Nano 20K / Primer 20K (GW2AR-LV18)**: External companion FPGA paired with Radxa Cubie A5E via 5-wire Dual-SPI (`/dev/spidev` + `INT_REQ` GPIO edge interrupt). Runs `asp_top.sv` (22% LUT4, 121.85 MHz routed Fmax) with 64-byte TLPs and hardware CRC32 validation.
 
 ---
 

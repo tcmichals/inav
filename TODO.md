@@ -23,7 +23,7 @@
 ```
 +───────────────────────────────────────────────────────────────────────────────────────────+
 │                                  inav-abstractx Virtual Bus                               │
-│                         (Flexible Software Sizing / 64-Byte FPGA TLP)                     │
+│                        (Unified 64-Byte / 512-bit TLP Wire Standard)                      │
 +─────────────────────────────────────────────┬─────────────────────────────────────────────+
                                               │
     ┌─────────────────────────┬───────────────┴───────────────┬─────────────────────────┐
@@ -48,7 +48,7 @@
      * **UART3**: 115200 baud, 10 Hz u-blox NEO-M8N GPS (`PI11/PI12` Pins 16 & 31) with circular DMA.
      * **TWI1 (I2C)**: 100–200 Hz QMC5883L / HMC5883L 3-axis digital compass (`PB4/PB5` Pins 3 & 5).
      * Streams 64-byte `Tlp64` packets over VirtIO RPMsg / Shared SRAM (`0x40000000`).
-   - **Companion FPGA**: Offloads microsecond-critical physical actuators & serial timing:
+   - **Companion FPGA (Sipeed Tang Nano 20K / Primer 20K - Gowin GW2A-18)**: Offloads microsecond-critical physical actuators & serial timing over 5-wire Dual-SPI (`SPI_IO0`, `SPI_IO1`, `SPI_SCLK`, `SPI_CS_N`) + GPIO doorbell interrupt (`INT_REQ`):
      * DShot150..1200 motor pulse synthesis with bidirectional RPM telemetry feedback.
      * High-speed CRSF RC receiver frame decoding.
      * NeoPixel WS2812 strict $\pm 150\text{ ns}$ timing synthesis.

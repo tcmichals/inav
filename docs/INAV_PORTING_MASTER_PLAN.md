@@ -34,7 +34,7 @@ This document is the persistent, step-by-step master checklist and architectural
 | **1.19** | **Sensor Auto-Detection & Displays** | `external/inav/src/main/drivers/display/` | [`src/drivers/sensor_detector.hpp`](../src/drivers/sensor_detector.hpp)<br>[`oled_ssd1306.hpp`](../src/drivers/display/oled_ssd1306.hpp)<br>[`osd_max7456.hpp`](../src/drivers/display/osd_max7456.hpp) | `COMPLETE` | `TEST 18/19` in `run_unit_tests` |
 | **1.20** | **Cubie A5E Linux SBC Transport** | `external/inav/src/main/target/` | [`src/target/linux_common/linux_fpga_transport.hpp`](../src/target/linux_common/linux_fpga_transport.hpp) | `COMPLETE` | `TEST 19/19` in `run_unit_tests` |
 | **1.21** | **ESP32-P4 MIPI-CSI Camera Optical Flow** | `external/inav/src/main/sensors/opflow.c` | [`src/sensors/optical_flow.hpp`](../src/sensors/optical_flow.hpp) | `COMPLETE` | `TEST 19/20` in `run_unit_tests` |
-| **1.22** | **Tang Nano 9K FPGA 64B TLP Bridge** | `external/inav/src/main/target/` | [`src/target/linux_common/tang9k_fpga_transport.hpp`](../src/target/linux_common/tang9k_fpga_transport.hpp) | `PLANNED` | Gowin GW1NR-9 64-byte parallel TLP bus bridge |
+| **1.22** | **QMTECH Zynq-7020 UIO Bridge** | `external/inav/src/main/target/` | [`src/target/linux_common/linux_fpga_transport.hpp`](../src/target/linux_common/linux_fpga_transport.hpp) | `COMPLETE` | XC7Z020 dual 8 KiB BRAM AXI-Lite /dev/uio0 bridge |
 | **1.23** | **Hardware Bus Safety & Unstick Recovery** | `external/inav/src/main/drivers/bus_i2c_hal.c`<br>`i2cUnstick()` (AN-686 9-pulse SCL + STOP) | [`src/drivers/bus/bus_concepts.hpp`](../src/drivers/bus/bus_concepts.hpp) | `COMPLETE` | `TEST 18/20` in `run_unit_tests` (`IsI2cBus`) |
 
 ---
@@ -116,12 +116,16 @@ This document is the persistent, step-by-step master checklist and architectural
   * Dual-core RISC-V HP CPU @ 400 MHz + Single-core RISC-V LP CPU @ 40 MHz with 768 KB L2 SRAM + 32 MB PSRAM.
   * 2-lane MIPI-CSI camera interface with hardware ISP processing 120 fps optical flow velocity vectors ($\Delta x, \Delta y$).
   * Wi-Fi 6 (802.11ax) companion transport delivering >50 Mbps sustained throughput for 1 kHz binary CTF Blackbox streaming and MSP Configurator over TCP 5760.
-- [ ] **Cubie A5E SBC + Tang Nano 9K FPGA Node**:
-  * Allwinner A523 Octa-Core ARM Cortex-A55 Linux `PREEMPT_RT` mission computer.
-  * Gowin GW1NR-9 FPGA (8640 LUT4, 26 Block RAMs) 64-byte TLP hardware routing bridge.
-- [x] **Sized Software TLP vs. 64-Byte FPGA Bus Protocol**:
-  * Variable-length compact TLP payloads over SPSC rings on microcontrollers (RP2350, ESP32-P4) to conserve internal SRAM footprint.
-  * Automatic 64-byte (512-bit) alignment padding ([TlpWire64](../include/asp_tlp64.hpp)) crossing into Tang 9K FPGA / DMA hardware boundaries for single-cycle DMA ingestion.
+- [x] **QMTECH Zynq-7020 (XC7Z020) FPGA Offload Node**:
+  * Dual ARM Cortex-A9 @ 667 MHz + Artix-7 fabric (85K logic cells, 140 Block RAMs / 4.9 Mbits).
+  * Dual 8 KiB PL BRAM packet FIFOs mapped at `0x4000_0000` via `M_AXI_GP0` and `/dev/uio0` with `IRQ_F2P[0]`.
+  * 512-bit crossbar switch (`asp_router.sv`) routing 64B TLPs in a single cycle between autonomous 8 kHz IMU SPI master, 4-channel DShot300/600 core, and nanosecond timer.
+- [x] **Sipeed Tang Nano 20K / Primer 20K (Gowin GW2A-18) Bench Companion Node**:
+  * GW2AR-LV18 FPGA (20,736 LUT4, 15,552 DFF, 46 BSRAMs) carrying 64-byte TLPs over 5-wire Dual-SPI (`SPI_IO0`, `SPI_IO1`, `SPI_SCLK`, `SPI_CS_N`, `INT_REQ`).
+  * 22% LUT4 utilization, 121.85 MHz routed Fmax with hardware CRC32 validation (`asp_spi_frontend.sv`).
+- [x] **Unified 64-Byte (512-bit) TLP Standard**:
+  * Fixed 64-byte `asp_tlp64_t` datagrams across all MCU, Linux SBC, and FPGA domains.
+  * Exact 64-byte cache-line alignment on ARM Cortex-A55/A9 cores (~80 ns copy) and clean packing of 8 TLPs per 512-byte RPMsg buffer.
 
 ---
 
