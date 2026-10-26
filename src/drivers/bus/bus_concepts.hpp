@@ -76,6 +76,7 @@ concept IsSpiBus = requires(
 
 // ---------------------------------------------------------------------------
 // C++20 Concept: IsI2cBus
+// Mandatory Avionics Flight Safety Invariant: Hardware 9-pulse unstick recovery
 // ---------------------------------------------------------------------------
 template <typename T>
 concept IsI2cBus = requires(
@@ -91,6 +92,10 @@ concept IsI2cBus = requires(
     { bus.async_read_reg(dev, reg) }         -> std::same_as<Task<uint8_t>>;
     { bus.async_read_regs(dev, reg, rx) }    -> std::same_as<Task<bool>>;
     { bus.async_write_bytes(dev, tx) }       -> std::same_as<Task<bool>>;
+
+    // Mandatory DO-178C avionics safety unstick gate (AN-686 9 SCL pulses + STOP)
+    { bus.recover_bus() }                    -> std::same_as<bool>;
+    { bus.async_recover_bus() }              -> std::same_as<Task<bool>>;
 };
 
 // ===========================================================================
@@ -330,6 +335,56 @@ public:
 #endif
     }
 
+    [[nodiscard]] bool recover_bus() noexcept {
+#if defined(PICO_BOARD)
+        // Analog Devices AN-686 & NXP UM10204 9-pulse I2C unstick protocol
+        // 1. Re-mux SCL and SDA from hardware I2C to software SIO GPIO
+        gpio_set_function(cfg_.scl_pin, GPIO_FUNC_SIO);
+        gpio_set_function(cfg_.sda_pin, GPIO_FUNC_SIO);
+        gpio_pull_up(cfg_.scl_pin);
+        gpio_pull_up(cfg_.sda_pin);
+
+        // Configure SIO open-drain simulation: output register = 0
+        gpio_put(cfg_.scl_pin, 0u);
+        gpio_put(cfg_.sda_pin, 0u);
+        gpio_set_dir(cfg_.scl_pin, GPIO_IN);
+        gpio_set_dir(cfg_.sda_pin, GPIO_IN);
+
+        // 2. Pulse SCL up to 9 times at 100 kHz (5 us half-cycles) until SDA released
+        for (int i = 0; i < 9; ++i) {
+            if (gpio_get(cfg_.sda_pin)) {
+                break; // Slave released SDA line
+            }
+            gpio_set_dir(cfg_.scl_pin, GPIO_OUT);
+            busy_wait_us_32(5u);
+            gpio_set_dir(cfg_.scl_pin, GPIO_IN);
+            uint32_t timeout_us = 500u;
+            while (!gpio_get(cfg_.scl_pin) && timeout_us--) {
+                busy_wait_us_32(1u); // Handle slave clock stretching
+            }
+            busy_wait_us_32(5u);
+        }
+
+        // 3. Issue I2C STOP condition (SDA rises while SCL is HIGH)
+        gpio_set_dir(cfg_.scl_pin, GPIO_OUT); busy_wait_us_32(5u);
+        gpio_set_dir(cfg_.sda_pin, GPIO_OUT); busy_wait_us_32(5u);
+        gpio_set_dir(cfg_.scl_pin, GPIO_IN);  busy_wait_us_32(5u);
+        gpio_set_dir(cfg_.sda_pin, GPIO_IN);  busy_wait_us_32(5u);
+
+        // 4. Restore hardware I2C peripheral multiplexing
+        gpio_set_function(cfg_.sda_pin, GPIO_FUNC_I2C);
+        gpio_set_function(cfg_.scl_pin, GPIO_FUNC_I2C);
+        i2c_init(i2c1, cfg_.baud_hz);
+        return gpio_get(cfg_.sda_pin) && gpio_get(cfg_.scl_pin);
+#else
+        return true;
+#endif
+    }
+
+    [[nodiscard]] Task<bool> async_recover_bus() noexcept {
+        co_return recover_bus();
+    }
+
     void set_fake_rx(uint8_t b) noexcept { fake_rx_ = b; }
 
 private:
@@ -370,6 +425,8 @@ public:
         co_return true;
     }
     [[nodiscard]] Task<bool> async_write_bytes(uint8_t, std::span<const uint8_t>) noexcept { co_return true; }
+    [[nodiscard]] bool recover_bus() noexcept { return true; }
+    [[nodiscard]] Task<bool> async_recover_bus() noexcept { co_return true; }
 
 private:
     std::array<uint8_t, 64u> buf_{};

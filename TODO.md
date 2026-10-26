@@ -152,6 +152,10 @@
 
 ### Target 2: Raspberry Pi Pico 2 W Bench Verification
 - [x] Compile bare-metal firmware `inav_abstractx_pico2w.elf` and `inav_pico2_imu_test.elf`.
+- [x] **Avionics Hardware Bus Safety & Unstick Recovery Gate (`IsI2cBus`)**:
+  * Enforced physical 9-pulse SCL clocking and STOP condition recovery (`recover_bus()`, `async_recover_bus()`) in `src/drivers/bus/bus_concepts.hpp`.
+  * Implemented RP2350 SIO open-drain recovery in `Pico2I2cBus`.
+  * Verified compile-time static assertions (`static_assert(IsI2cBus<Pico2I2cBus>)`) and unit tests.
 - [ ] Flash to physical Pico 2 W hardware and verify Core 0 Wi-Fi MSP bridge + Core 1 8 kHz flight loop.
 
 ### Target 3 & 4: ESP32-P4 & QMTECH Zynq Hardware Staging

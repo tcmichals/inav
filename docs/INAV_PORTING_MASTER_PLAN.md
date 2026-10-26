@@ -35,6 +35,7 @@ This document is the persistent, step-by-step master checklist and architectural
 | **1.20** | **Cubie A5E Linux SBC Transport** | `external/inav/src/main/target/` | [`src/target/linux_common/linux_fpga_transport.hpp`](../src/target/linux_common/linux_fpga_transport.hpp) | `COMPLETE` | `TEST 19/19` in `run_unit_tests` |
 | **1.21** | **ESP32-P4 MIPI-CSI Camera Optical Flow** | `external/inav/src/main/sensors/opflow.c` | [`src/sensors/optical_flow.hpp`](../src/sensors/optical_flow.hpp) | `COMPLETE` | `TEST 19/20` in `run_unit_tests` |
 | **1.22** | **Tang Nano 9K FPGA 64B TLP Bridge** | `external/inav/src/main/target/` | [`src/target/linux_common/tang9k_fpga_transport.hpp`](../src/target/linux_common/tang9k_fpga_transport.hpp) | `PLANNED` | Gowin GW1NR-9 64-byte parallel TLP bus bridge |
+| **1.23** | **Hardware Bus Safety & Unstick Recovery** | `external/inav/src/main/drivers/bus_i2c_hal.c`<br>`i2cUnstick()` (AN-686 9-pulse SCL + STOP) | [`src/drivers/bus/bus_concepts.hpp`](../src/drivers/bus/bus_concepts.hpp) | `COMPLETE` | `TEST 18/20` in `run_unit_tests` (`IsI2cBus`) |
 
 ---
 

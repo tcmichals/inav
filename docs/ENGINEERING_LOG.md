@@ -481,6 +481,30 @@ This engineering log records design decisions, hardware trade-offs, architectura
   - AbstractX host test suite (`ctest --test-dir build_host`): 69/69 tests passed (100% in 14.67s).
   - Master validation suite (`python3 tools/run_all_validations.py`): All 8 verification steps passed (100%).
 
+---
+
+### [2026-10-25] Avionics Hardware Bus Safety Gate & I2C Stuck Slave Recovery Implementation
+- **Category**: `architecture` / `avionics-safety`
+- **Decision**:
+  1. Extended `concept IsI2cBus` in `src/drivers/bus/bus_concepts.hpp` to mandate physical 9-pulse SCL clocking and STOP condition recovery (`recover_bus()`, `async_recover_bus()`).
+  2. Implemented AN-686 9-pulse unstick recovery in `Pico2I2cBus` using RP2350 SIO open-drain GPIO simulation (toggling SCL 9 times at 100 kHz until SDA returns high, followed by STOP condition).
+  3. Updated `FakeI2cBus` and added static assertions (`static_assert(IsI2cBus<Pico2I2cBus>)`) and unit tests in `test/test_main.cpp`.
+  4. Formally documented Section 1.23 in `docs/INAV_PORTING_MASTER_PLAN.md` mandating physical bus unstick recovery for all flight-critical I2C drivers.
+- **Rationale**:
+  1. Closes the DO-178C avionics safety gap where an unmanaged I2C slave holding SDA low would permanently deadlock the bus without recovery.
+  2. Ensures any bus driver that fails to provide physical unstick capabilities fails compilation immediately at static assertion time rather than causing an in-flight freeze.
+  3. Strictly maintained Rule 8: zero changes made to `AbstractX`.
+- **Files Modified**:
+  - `src/drivers/bus/bus_concepts.hpp`
+  - `test/test_main.cpp`
+  - `docs/INAV_PORTING_MASTER_PLAN.md`
+  - `TODO.md`
+  - `docs/ENGINEERING_LOG.md`
+- **Verification Evidence**:
+  - C++20 unit tests (`run_unit_tests`): All 20 test suites passed 100%.
+  - Full master validation suite (`python3 tools/run_all_validations.py`): All 8 steps passed 100%.
+  - `pico2_hw_test`: Executed with code 0.
+
 
 
 

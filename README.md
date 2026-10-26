@@ -16,8 +16,9 @@ The system is deployed uniformly across four heterogeneous hardware platforms:
 - **ESP32-P4-WIFI6 (Kit A / Slim)**: Dual-core 400 MHz RISC-V companion with 2-lane MIPI-CSI 120 fps optical flow camera and Wi-Fi 6 telemetry.
 - **Linux Desktop SITL**: 6-DOF multicopter software-in-the-loop simulation with INAV Configurator TCP server (port 5760).
 
-> [!NOTE]
-> Upstream INAV's original documentation, setup instructions, and feature guide are preserved in [`docs/inav.md`](docs/inav.md).
+> [!IMPORTANT]
+> **Upstream Synchronization & Merge Invariant**:
+> Upstream INAV's original documentation, setup instructions, and feature guide are preserved in [`docs/inav.md`](docs/inav.md). When synchronizing or merging submodules (`external/inav` or `external/betaflight`), this root `README.md` is strictly authoritative for the C++20 flight engine architecture and must never be overwritten by upstream legacy README files.
 
 ---
 
@@ -25,7 +26,7 @@ The system is deployed uniformly across four heterogeneous hardware platforms:
 
 ### Zero Busy-Waiting Loops (`while/for` Register Elimination)
 All legacy synchronous loops (`while (!ready) poll()`, `delay_ms()`) are strictly eliminated. All sensor drivers and flight engines operate exclusively via non-blocking C++20 coroutines:
-- **`co_await tlp_channel.async_transaction(req)`**: Dispatches 64-byte PCIe TLPs over lock-free SPSC rings and suspends the coroutine ($<0.05\,\mu\text{s}$ swap) until hardware completion.
+- **`co_await tlp_channel.async_transaction(req)`**: Dispatches PCIe TLPs over lock-free point-to-point SPSC rings (e.g. E906 $\leftrightarrow$ Linux) or atomic MPSC queues (multi-coroutine) and suspends the coroutine ($<0.05\,\mu\text{s}$ swap) until hardware completion.
 - **`when_any(hardware_task, timeout_task)` (`||`)**: Watchdog racing prevents bus lockups and achieves minimum latency upon DMA return.
 - **`when_all(sensor1_init, sensor2_init)` (`&&`)**: Multi-sensor boot initialization executes in parallel, scaling total boot latency to $\max(\text{delays})$ instead of $\sum(\text{delays})$.
 
@@ -39,7 +40,7 @@ All legacy synchronous loops (`while (!ready) poll()`, `delay_ms()`) are strictl
 │  - Decoupled from physical register maps and MCU HAL implementations                     │
 +─────────────────────────────────────────────┬─────────────────────────────────────────────+
                                               │
-                   [Outbound TLP SPSC Ring]   │   [Inbound TLP SPSC Ring]
+     [Dedicated Outbound SPSC Ring]           │   [Inbound SPSC / MPSC Channel Multiplexer]
                                               │
 +─────────────────────────────────────────────▼─────────────────────────────────────────────+
 │ BOTTOM HALF: Hardware I/O Scheduler & Transport Layer                                     │
@@ -94,7 +95,7 @@ Flight controllers must coordinate physical sensor settling and conversion delay
 | :--- | :--- | :--- | :--- |
 | **Execution Paradigm** | Preemptive OS threads | Cooperative tick-based task array | Cooperative stackless coroutines |
 | **Stack Memory Model** | Dedicated stack per thread ($2\text{–}8\text{ KB}$ each) | Single execution stack ($\approx 4\text{–}8\text{ KB}$) | Single execution stack + static coroutine pool |
-| **Inter-Task Coordination** | Mutexes, semaphores, queues | Shared structs with rate guards | Lock-free SPSC TLP queues |
+| **Inter-Task Coordination** | Mutexes, semaphores, queues | Shared structs with rate guards | Dedicated point-to-point SPSC rings & MPSC event queues / Channel Multiplexers |
 | **Context Switch Mechanism** | OS kernel register save/restore | Function call dispatch | Coroutine frame pointer swap |
 | **Driver Control Flow** | Blocking OS calls or thread loops | Multi-step state machine enums | Sequential expressions with `co_await` |
 | **Dynamic Memory Model** | Runtime thread/queue allocations | Static global memory | Static memory pools (0 runtime heap bytes) |
@@ -118,7 +119,7 @@ The Transaction Layer Packet (TLP) abstraction decouples high-level flight dynam
 #### Microcontroller Domain (RP2350 Pico 2 / Pico 2 W, ESP32-P4 Slim)
 - **SRAM Constraints**: Microcontrollers have tightly constrained internal memory (520 KB SRAM on RP2350, 768 KB L2 SRAM on ESP32-P4).
 - **Payload Characteristics**: Most sensor register transactions transfer 1 to 6 bytes (e.g., 1-byte register writes or 6-byte IMU gyro/accel burst reads).
-- **SPSC Ring Efficiency**: Enforcing fixed 64-byte allocations for every ring-buffer transaction would waste SRAM and increase CPU memory-copy overhead across internal buses. Therefore, software internal ring buffers use compact, variable-length TLP payloads (header + $N$-byte payload).
+- **Ring Buffer Efficiency**: Enforcing fixed 64-byte allocations for every internal software ring transaction would waste SRAM and increase CPU memory-copy overhead across internal buses. Therefore, software internal ring buffers use compact, variable-length TLP payloads (header + $N$-byte payload) routed through point-to-point `SpscTlpChannel`s or atomic `MpscEventQueue`s.
 
 #### Hardware FPGA / Tang 9K Domain (Gowin GW1NR-9)
 - **Wide Parallel Datapaths**: The Tang Nano 9K FPGA uses synchronous parallel internal buses and Block RAM FIFOs (26 B-SRAM blocks, 468 Kbits total, 64 Mbit PSRAM).

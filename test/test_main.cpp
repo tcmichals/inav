@@ -1140,6 +1140,18 @@ void test_sensor_detector_and_displays() {
     drivers::bus::FakeI2cBus i2c{};
     SensorConfig cfg{};
 
+    // 0. Avionics Flight Safety Invariant Gate: I2C 9-Pulse Bus Unstick Recovery
+    {
+        static_assert(drivers::bus::IsI2cBus<drivers::bus::Pico2I2cBus>, "Pico2I2cBus must satisfy IsI2cBus with unstick recovery");
+        static_assert(drivers::bus::IsI2cBus<drivers::bus::FakeI2cBus>, "FakeI2cBus must satisfy IsI2cBus with unstick recovery");
+        assert(i2c.recover_bus());
+        auto rec_task = i2c.async_recover_bus();
+        while (!rec_task.done()) {
+            rec_task.resume();
+        }
+        assert(rec_task.value());
+    }
+
     // 1. IMU Probing & Identification (ICM-42688-P)
     {
         drivers::SensorDetector detector{spi, i2c, cfg};

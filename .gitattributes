@@ -1,0 +1,7 @@
+# -----------------------------------------------------------------------------
+# gitattributes: Protect authoritative project files from upstream merges
+# -----------------------------------------------------------------------------
+README.md merge=ours
+TODO.md merge=ours
+docs/ENGINEERING_LOG.md merge=ours
+docs/INAV_PORTING_MASTER_PLAN.md merge=ours
