@@ -29,6 +29,7 @@ All legacy synchronous loops (`while (!ready) poll()`, `delay_ms()`) are strictl
 - **`co_await tlp_channel.async_transaction(req)`**: Dispatches PCIe TLPs over lock-free point-to-point SPSC rings (e.g. E906 $\leftrightarrow$ Linux) or atomic MPSC queues (multi-coroutine) and suspends the coroutine ($<0.05\,\mu\text{s}$ swap) until hardware completion.
 - **`when_any(hardware_task, timeout_task)` (`||`)**: Watchdog racing prevents bus lockups and achieves minimum latency upon DMA return.
 - **`when_all(sensor1_init, sensor2_init)` (`&&`)**: Multi-sensor boot initialization executes in parallel, scaling total boot latency to $\max(\text{delays})$ instead of $\sum(\text{delays})$.
+- **Autonomous Auto-DMA Hardware Offload**: Offloads 8 kHz IMU SPI transactions from the CPU to dedicated FPGA/PIO/co-processor state machines upon physical DRDY GPIO edge interrupts, streaming 64-byte `ASP_TLP_TYPE_DMA_STREAM` frames directly into lock-free SPSC rings ($\approx 80\,\text{ns}$ L1 cache-line copy).
 
 ```
 +───────────────────────────────────────────────────────────────────────────────────────────+
@@ -129,12 +130,66 @@ The FPGA offload engine operates under two hardware profiles using the same unif
 
 ---
 
+### 3.4 Generic Autonomous Auto-DMA Pipeline (Any IMU with ISR / GPIO Trigger)
+
+High-rate flight dynamics (8 kHz loop frequency) require sub-microsecond IMU data delivery to minimize phase lag in the Rate PID controller. In traditional flight stacks, the CPU polls registers or triggers sequential SPI transactions upon interrupt arrival, consuming up to $14\,\mu\text{s}$ of CPU execution time while stalling on SPI bus serialization.
+
+`inav-abstractx` incorporates a **hardware-offloaded Auto-DMA pipeline** compatible with any IMU providing a physical Data-Ready (DRDY) or GPIO interrupt signal. The hardware state machine autonomously clocks the sensor burst read upon detecting the physical pin edge, encapsulates the raw bytes into a 64-byte `ASP_TLP_TYPE_DMA_STREAM` (`0x10`) packet, and streams it directly into lock-free SPSC rings (`SpscTlpRing`) with zero CPU involvement.
+
+```
++───────────────────────────────────────────────────────────────────────────────────────────+
+│ PHYSICAL IMU SENSOR (ICM-42688-P / MPU-6000 / BMI088)                                     │
+│  - Internal ODR: 8 kHz gyro + accel hardware sampling                                     │
+│  - Asserts physical DRDY interrupt pin when raw registers are ready                       │
++─────────────────────────────────────────────┬─────────────────────────────────────────────+
+                                              │ Physical DRDY Edge (Rising / Falling)
+                                              ▼
++───────────────────────────────────────────────────────────────────────────────────────────+
+│ AUTONOMOUS HARDWARE ENGINE (Zero-CPU Ingestion)                                           │
+│  ├── QMTECH Zynq-7020 PL: asp_imu_auto_dma.sv (Single-cycle AXI SPI burst -> PL BRAM)    │
+│  ├── RP2350 Pico 2: PIO2 State Machine + DMA Channel (Direct SPI FIFO -> SPSC Ring)       │
+│  └── Cubie A5E: E906 RISC-V PLIC IRQ -> Circular DMA -> VirtIO RPMsg (addr 1024)          │
++─────────────────────────────────────────────┬─────────────────────────────────────────────+
+                                              │ Autonomous 64-Byte TLP Stream (Type 0x10, Tag 1)
+                                              ▼
++───────────────────────────────────────────────────────────────────────────────────────────+
+│ FLIGHT ENGINE: SpscTlpRing Ingestion (<80 ns L1 Cache Line Copy)                          │
+│  - FlightEngineTemplate::run_loop() demultiplexes incoming TLP by tag / channel          │
+│  - Driver Top-Half parse_tlp() converts raw burst to calibrated ImuSample                 │
+│  - Dynamic Gyro Notch FFT + Betaflight Rate PID loop executed at 8 kHz                    │
++───────────────────────────────────────────────────────────────────────────────────────────+
+```
+
+#### Compile-Time `AutoDmaCapableImu` C++20 Concept
+In [`src/target/common/auto_dma_manager.hpp`](file:///home/tcmichals/projects/quadcopter/inav/src/target/common/auto_dma_manager.hpp), any sensor driver conforms to generic Auto-DMA through static concept validation:
+```cpp
+template <typename T>
+concept AutoDmaCapableImu = requires(std::span<const uint8_t> raw, uint64_t ts, const Tlp64& tlp) {
+    { T::auto_dma_profile() } -> std::same_as<ImuAutoDmaProfile>;
+    { T::parse_raw_burst(raw, ts) } -> std::same_as<ImuSample>;
+    { T::parse_tlp(tlp) } -> std::same_as<ImuSample>;
+};
+```
+
+#### Supported Sensor Profiles & Hardware Offloading
+- **TDK ICM-42688-P** ([`src/drivers/imu/icm42688p.hpp`](file:///home/tcmichals/projects/quadcopter/inav/src/drivers/imu/icm42688p.hpp)): Burst starting at register `0x1D` (`REG_TEMP_DATA1`), length 14 bytes (`Temp[0..1]`, `Accel[2..7]`, `Gyro[8..13]`), positive rising edge, 24 MHz SPI.
+- **InvenSense MPU-6000** ([`src/drivers/imu/mpu6000.hpp`](file:///home/tcmichals/projects/quadcopter/inav/src/drivers/imu/mpu6000.hpp)): Burst starting at register `0x3B` (`REG_ACCEL_XOUT_H`), length 14 bytes (`Accel[0..5]`, `Temp[6..7]`, `Gyro[8..13]`), positive rising edge, 20 MHz SPI.
+- **Bosch BMI088** ([`src/drivers/imu/bmi088.hpp`](file:///home/tcmichals/projects/quadcopter/inav/src/drivers/imu/bmi088.hpp)): Gyro burst starting at register `0x02` (`REG_RATE_X_LSB`), length 6 bytes (Little-Endian `Gyro X, Y, Z`), positive rising edge, 10 MHz SPI.
+
+#### Protocol Wire Format (`ASP_TLP_TYPE_DMA_STREAM` 0x10)
+- **Setup Packet (`ASP_TLP_TYPE_DMA_CFG` 0x11, Command `0x01`)**: Configures trigger pin, edge sensitivity, SPI bus ID, burst read register command (`0x80 | reg`), and egress telemetry channel (`0x02`).
+- **Control Packet (`ASP_TLP_TYPE_DMA_CFG` 0x11, Command `0x02` / `0x03`)**: Dynamically arms or disarms hardware streaming, locking/unlocking the physical bus for manual configuration access.
+- **Stream Packet (`ASP_TLP_TYPE_DMA_STREAM` 0x10)**: Carries up to 40 bytes of raw sensor payload, 64-bit nanosecond hardware capture timestamp, correlation tag (`Tag 1` for IMU, `Tag 2` for GPS, `Tag 3` for Mag, `Tag 4` for Baro, `Tag 5` for Pitot), and sequential packet counter.
+
+---
+
 ## 4. Subsystem Implementation & Upstream Parity
 
 Algorithms are ported from upstream C sources in [`external/inav/src/main/`](external/inav/src/main/) and [`external/betaflight/src/main/`](external/betaflight/src/main/):
 
 | Subsystem | Upstream Reference | C++20 Implementation | Description |
 | :--- | :--- | :--- | :--- |
+| **Auto-DMA IMU Pipeline** | `inav/src/main/drivers/bus_spi.c`<br>`accgyro_spi_*.c` | [`src/target/common/auto_dma_manager.hpp`](file:///home/tcmichals/projects/quadcopter/inav/src/target/common/auto_dma_manager.hpp)<br>[`src/drivers/imu/imu_base.hpp`](file:///home/tcmichals/projects/quadcopter/inav/src/drivers/imu/imu_base.hpp) | Concept-based autonomous hardware DRDY/ISR offloading for any IMU (ICM-42688-P, MPU-6000, BMI088) with 64-byte `ASP_TLP_TYPE_DMA_STREAM` ingestion. |
 | **Mahony AHRS** | `inav/src/main/flight/imu.c` | [`src/flight/attitude.hpp`](src/flight/attitude.hpp) | 11-stage Mahony orientation filter with centrifugal acceleration compensation ($\vec{a}_{\text{cent}} = \vec{v} \times \vec{\omega}$), gravity vector weighting, and magnetometer/GPS fusion. |
 | **Dynamic Gyro Notch** | `inav/src/main/flight/gyroanalyse.c` | [`src/flight/gyro_analyse.hpp`](src/flight/gyro_analyse.hpp) | 4-stage FFT analysis pipeline using Hanning windowing and parabolic peak interpolation for center frequency tracking. |
 | **Dynamic Gyro LPF** | `inav/src/main/flight/dynamic_lpf.c` | [`src/flight/dynamic_lpf.hpp`](src/flight/dynamic_lpf.hpp) | 1st/2nd-order dynamic low-pass filter scaled to throttle and motor RPM. |

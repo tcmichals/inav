@@ -97,6 +97,7 @@
 - [x] **3.4 Zero Code Duplication Integration**: AbstractX canonical headers (`tlp_ring.hpp`, `asp_tlp64.hpp`, `pcie_bar_map.hpp`) included with zero shadow duplicates.
 - [x] **3.5 Full-Stack 60-Second Mission Parity Test**: 60,000 flight steps with $0.000000^\circ$ attitude error.
 - [x] **3.6 Scheduler Benchmark Validation**: 100,000 cycles with 0 dynamic heap allocations, $0.935\text{ \mu s}$ jitter.
+- [x] **3.7 Generic IMU Auto-DMA & ISR/GPIO Trigger Pipeline**: Implemented C++20 `AutoDmaCapableImu` concept, hardware burst profiles, raw byte parsers, and configuration/stream TLPs (`ASP_TLP_TYPE_DMA_STREAM` 0x10) supporting any IMU with a DRDY/GPIO interrupt line (ICM-42688-P, MPU-6000, BMI088). Added autonomous telemetry stream demuxing in `FlightEngine` and unit test verification.
 
 ---
 

@@ -37,6 +37,14 @@ enum class ImuInitResult : uint8_t {
     BusError       = 3u,
 };
 
+// Generic Auto-DMA Hardware Trigger Profile supported by any IMU with DRDY/ISR pin.
+struct ImuAutoDmaProfile {
+    uint8_t  burst_reg{0x00u};          // Starting register address to clock out on trigger
+    uint8_t  burst_len{14u};            // Number of data bytes clocked in
+    bool     trigger_edge_rising{true}; // true = rising edge, false = falling edge
+    uint32_t default_baud_hz{20'000'000u};
+};
+
 struct ImuSample {
     std::array<float, 3> accel_g{0.0f, 0.0f, 1.0f};    // Accel X, Y, Z in Gs
     std::array<float, 3> gyro_deg_s{0.0f, 0.0f, 0.0f}; // Gyro X, Y, Z in deg/s

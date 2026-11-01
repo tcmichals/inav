@@ -17,12 +17,101 @@
 #include "asp_tlp64.hpp"
 #include "pcie_bar_map.hpp"
 #include "spsc_tlp_ring.hpp"
+#include "imu_base.hpp"
+#include "abstractx/hal/io_processor.hpp"
 #include <cstdint>
 #include <cstddef>
 #include <array>
 #include <span>
+#include <concepts>
+#include <algorithm>
 
 namespace abstractx::target::common {
+
+// ============================================================================
+// Generic C++20 Auto-DMA Concept for Any IMU with ISR/GPIO Trigger
+// ============================================================================
+template <typename T>
+concept AutoDmaCapableImu = requires {
+    { T::auto_dma_profile() } -> std::same_as<drivers::imu::ImuAutoDmaProfile>;
+    { T::parse_raw_burst(std::span<const uint8_t>{}, uint64_t{}) } -> std::same_as<drivers::imu::ImuSample>;
+};
+
+// Builds canonical AbstractX AutoChannelConfig for ANY Auto-DMA capable IMU
+template <AutoDmaCapableImu ImuDriver>
+[[nodiscard]] inline hal::AutoChannelConfig make_imu_auto_dma_cfg(
+    uint32_t trigger_pin,
+    uint32_t cs_pin = 0,
+    uint8_t bus_index = 0,
+    uint8_t channel_id = 0) noexcept {
+    constexpr auto prof = ImuDriver::auto_dma_profile();
+    hal::AutoChannelConfig c{};
+    c.channel_id = channel_id;
+    c.auto_mode = true;
+    c.trigger_mode = hal::TriggerMode::GpioEdge;
+    c.trigger_pin = trigger_pin;
+    c.trigger_rising = prof.trigger_edge_rising;
+    c.bus_type = hal::BusType::Spi;
+    c.bus_index = bus_index;
+    c.bus_speed_hz = prof.default_baud_hz;
+    c.cs_pin = cs_pin;
+    c.tx_cmd[0] = static_cast<uint8_t>(prof.burst_reg | 0x80u); // SPI read flag
+    c.tx_len = 1;
+    c.rx_len = prof.burst_len;
+    c.tlp_channel = ASP_CHANNEL_TELEMETRY;
+    c.tlp_tag = 1; // Tag 1 = IMU
+    return c;
+}
+
+// Builds an ASP_TLP_TYPE_DMA_CFG SETUP packet for ANY Auto-DMA capable IMU
+template <AutoDmaCapableImu ImuDriver>
+[[nodiscard]] inline Tlp64 make_imu_auto_dma_setup_tlp(
+    uint32_t trigger_pin,
+    uint8_t bus_id = 0,
+    uint8_t channel_id = 0,
+    uint8_t tag = 1) noexcept {
+    constexpr auto prof = ImuDriver::auto_dma_profile();
+    asp_tlp_auto_dma_cfg_t c{};
+    c.cmd = ASP_DMA_CMD_SETUP;
+    c.channel_id = channel_id;
+    c.trigger_pin = static_cast<uint8_t>(trigger_pin);
+    c.trigger_edge = prof.trigger_edge_rising ? ASP_GPIO_EDGE_RISING : ASP_GPIO_EDGE_FALLING;
+    c.bus_type = 0; // SPI
+    c.bus_id = bus_id;
+    c.tx_len = 1;
+    c.rx_len = prof.burst_len;
+    c.tx_cmd[0] = static_cast<uint8_t>(prof.burst_reg | 0x80u);
+    c.tlp_channel = ASP_CHANNEL_TELEMETRY;
+    c.tlp_tag = 1;
+    return Tlp64::make_hw_fusion_setup(c, tag);
+}
+
+// Builds an ASP_TLP_TYPE_DMA_CFG Mode Control packet (Arm / Disarm)
+[[nodiscard]] inline Tlp64 make_auto_dma_control_tlp(uint8_t channel_id, bool enable, uint8_t tag = 2) noexcept {
+    return Tlp64::make_hw_fusion_control(channel_id, enable, tag);
+}
+
+// Builds an autonomous hardware Auto-DMA stream TLP (Type = 0x10, Channel = 0x02 TELEMETRY)
+[[nodiscard]] inline Tlp64 make_auto_dma_stream_tlp(Channel ch,
+                                                    uint32_t bar_address,
+                                                    std::span<const uint8_t> payload,
+                                                    uint64_t timestamp_ns = 0,
+                                                    uint8_t tag = 1,
+                                                    uint16_t seq = 0) noexcept {
+    Tlp64 tlp{};
+    tlp.wire.type = ASP_TLP_TYPE_DMA_STREAM;
+    tlp.wire.channel = static_cast<uint8_t>(ch);
+    tlp.wire.tag = tag;
+    tlp.wire.target_address = bar_address;
+    tlp.wire.sequence = seq;
+    tlp.wire.timestamp_ns = timestamp_ns;
+    const size_t copy_len = std::min(payload.size(), static_cast<size_t>(ASP_TLP64_PAYLOAD_SIZE));
+    tlp.wire.length_dw = static_cast<uint16_t>((copy_len + 3) / 4);
+    if (copy_len > 0) {
+        std::memcpy(tlp.wire.payload, payload.data(), copy_len);
+    }
+    return tlp;
+}
 
 enum class DmaChannelType : uint8_t {
     ImuBurst     = 0, // High-rate 8 kHz IMU Accel+Gyro 14B burst
@@ -76,6 +165,31 @@ public:
         for (size_t i = 0; i < copy_len; ++i) {
             tlp.wire.payload[i] = payload[i];
         }
+
+        const bool pushed = ch.ring->push(tlp);
+        if (pushed) {
+            ch.stats.total_packets++;
+            ch.stats.last_timestamp_ns = timestamp_ns;
+        } else {
+            ch.stats.dropped_packets++;
+        }
+
+        return pushed;
+    }
+
+    // Ingest autonomous hardware Auto-DMA stream TLP (Type = 0x10, Channel = 0x02 TELEMETRY)
+    [[nodiscard]] bool ingest_stream_burst(DmaChannelType type,
+                                           std::span<const uint8_t> payload,
+                                           uint64_t timestamp_ns,
+                                           uint8_t tag = 1) noexcept {
+        const size_t idx = static_cast<size_t>(type);
+        if (idx >= MaxChannels || !channels_[idx].active || channels_[idx].ring == nullptr) {
+            return false;
+        }
+
+        auto& ch = channels_[idx];
+        const uint16_t seq = static_cast<uint16_t>(ch.seq_tag++);
+        Tlp64 tlp = make_auto_dma_stream_tlp(Channel::Telemetry, ch.bar_address, payload, timestamp_ns, tag, seq);
 
         const bool pushed = ch.ring->push(tlp);
         if (pushed) {

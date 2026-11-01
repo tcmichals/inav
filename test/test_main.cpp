@@ -1595,6 +1595,132 @@ void test_decoupled_tlp_drivers_and_scheduler() {
         assert(target::pico2::Pico2DualCoreTopology::msp_server_port() == 5760u);
     }
 
+    // 13. Test Generic Auto-DMA for Any IMU with ISR/GPIO Trigger (ICM-42688P, MPU-6000, BMI088)
+    {
+        using namespace target::common;
+        using namespace drivers::imu;
+
+        // Verify AutoDmaCapableImu concept across all supported IMU drivers
+        static_assert(AutoDmaCapableImu<Icm42688P>);
+        static_assert(AutoDmaCapableImu<Mpu6000>);
+        static_assert(AutoDmaCapableImu<Bmi088>);
+        static_assert(AutoDmaCapableImu<Icm42688pTlpDriver>);
+        static_assert(AutoDmaCapableImu<Mpu6000TlpDriver>);
+        static_assert(AutoDmaCapableImu<Bmi088TlpDriver>);
+
+        // 1. ICM-42688-P Auto-DMA Configuration & Setup TLP
+        auto icm_cfg = make_imu_auto_dma_cfg<Icm42688P>(29u, 24u, 1u, 0u);
+        assert(icm_cfg.channel_id == 0u);
+        assert(icm_cfg.trigger_pin == 29u);
+        assert(icm_cfg.trigger_rising == true);
+        assert(icm_cfg.bus_type == hal::BusType::Spi);
+        assert(icm_cfg.bus_index == 1u);
+        assert(icm_cfg.tx_cmd[0] == (0x1Du | 0x80u)); // 0x9D: Read TEMP_DATA1
+        assert(icm_cfg.tx_len == 1u);
+        assert(icm_cfg.rx_len == 14u);
+        assert(icm_cfg.tlp_tag == 1u);
+
+        Tlp64 icm_setup_tlp = make_imu_auto_dma_setup_tlp<Icm42688P>(29u, 1u, 0u, 42u);
+        assert(icm_setup_tlp.wire.type == ASP_TLP_TYPE_DMA_CFG);
+        assert(icm_setup_tlp.wire.tag == 42u);
+        auto* setup_payload = reinterpret_cast<const asp_tlp_auto_dma_cfg_t*>(icm_setup_tlp.wire.payload);
+        assert(setup_payload->cmd == ASP_DMA_CMD_SETUP);
+        assert(setup_payload->trigger_pin == 29u);
+        assert(setup_payload->bus_id == 1u);
+        assert(setup_payload->rx_len == 14u);
+
+        // 2. MPU-6000 Auto-DMA Configuration
+        auto mpu_cfg = make_imu_auto_dma_cfg<Mpu6000>(14u, 13u, 0u, 0u);
+        assert(mpu_cfg.trigger_pin == 14u);
+        assert(mpu_cfg.tx_cmd[0] == (0x3Bu | 0x80u)); // 0xBB: Read ACCEL_XOUT_H
+        assert(mpu_cfg.rx_len == 14u);
+
+        // 3. BMI088 Auto-DMA Configuration (Gyro Burst)
+        auto bmi_cfg = make_imu_auto_dma_cfg<Bmi088>(10u, 11u, 0u, 0u);
+        assert(bmi_cfg.trigger_pin == 10u);
+        assert(bmi_cfg.tx_cmd[0] == (0x02u | 0x80u)); // 0x82: Read RATE_X_LSB
+        assert(bmi_cfg.rx_len == 6u);
+
+        // 4. Auto-DMA Mode Control TLPs (Enable / Disable)
+        Tlp64 arm_tlp = make_auto_dma_control_tlp(0u, true, 55u);
+        assert(arm_tlp.wire.type == ASP_TLP_TYPE_DMA_CFG);
+        auto* arm_payload = reinterpret_cast<const asp_tlp_auto_dma_cfg_t*>(arm_tlp.wire.payload);
+        assert(arm_payload->cmd == ASP_DMA_CMD_ENABLE);
+        assert(arm_payload->channel_id == 0u);
+
+        Tlp64 disarm_tlp = make_auto_dma_control_tlp(0u, false, 56u);
+        auto* disarm_payload = reinterpret_cast<const asp_tlp_auto_dma_cfg_t*>(disarm_tlp.wire.payload);
+        assert(disarm_payload->cmd == ASP_DMA_CMD_DISABLE);
+
+        // 5. Raw Auto-DMA Stream TLP Ingestion & Parsing: ICM-42688-P
+        // Raw burst from 0x1D: Temp[0..1], Accel[2..7], Gyro[8..13]
+        std::array<uint8_t, 14> icm_raw_burst{};
+        // Temp = 25.0°C (raw = 0)
+        icm_raw_burst[0] = 0x00; icm_raw_burst[1] = 0x00;
+        // Accel Y = +1.0g (2048 = 0x0800)
+        icm_raw_burst[2] = 0x00; icm_raw_burst[3] = 0x00; // X = 0
+        icm_raw_burst[4] = 0x08; icm_raw_burst[5] = 0x00; // Y = 2048
+        icm_raw_burst[6] = 0x00; icm_raw_burst[7] = 0x00; // Z = 0
+        // Gyro X = +10.0 dps (164 = 0x00A4)
+        icm_raw_burst[8] = 0x00; icm_raw_burst[9] = 0xA4; // X = 164
+        icm_raw_burst[10] = 0x00; icm_raw_burst[11] = 0x00; // Y = 0
+        icm_raw_burst[12] = 0x00; icm_raw_burst[13] = 0x00; // Z = 0
+
+        Tlp64 icm_stream_tlp = make_auto_dma_stream_tlp(Channel::Telemetry, bar::ImuBase, icm_raw_burst, 555666777ULL, 1u);
+        auto icm_sample = Icm42688P::parse_tlp(icm_stream_tlp);
+        assert(icm_sample.timestamp_ns == 555666777ULL);
+        assert(std::abs(icm_sample.accel_g[1] - 1.0f) < 0.001f);
+        assert(std::abs(icm_sample.gyro_deg_s[0] - 10.0f) < 0.05f);
+        assert(std::abs(icm_sample.temperature_c - 25.0f) < 0.01f);
+
+        // 6. Raw Auto-DMA Stream TLP Ingestion & Parsing: MPU-6000
+        // Raw burst from 0x3B: Accel[0..5], Temp[6..7], Gyro[8..13]
+        std::array<uint8_t, 14> mpu_raw_burst{};
+        // Accel Z = +1.0g (2048 = 0x0800)
+        mpu_raw_burst[0] = 0x00; mpu_raw_burst[1] = 0x00; // X = 0
+        mpu_raw_burst[2] = 0x00; mpu_raw_burst[3] = 0x00; // Y = 0
+        mpu_raw_burst[4] = 0x08; mpu_raw_burst[5] = 0x00; // Z = 2048
+        // Temp = 36.53°C (raw = 0)
+        mpu_raw_burst[6] = 0x00; mpu_raw_burst[7] = 0x00;
+        // Gyro Y = +20.0 dps (328 = 0x0148)
+        mpu_raw_burst[8] = 0x00; mpu_raw_burst[9] = 0x00; // X = 0
+        mpu_raw_burst[10] = 0x01; mpu_raw_burst[11] = 0x48; // Y = 328
+        mpu_raw_burst[12] = 0x00; mpu_raw_burst[13] = 0x00; // Z = 0
+
+        Tlp64 mpu_stream_tlp = make_auto_dma_stream_tlp(Channel::Telemetry, bar::ImuBase, mpu_raw_burst, 999888777ULL, 1u);
+        auto mpu_sample = Mpu6000::parse_tlp(mpu_stream_tlp);
+        assert(mpu_sample.timestamp_ns == 999888777ULL);
+        assert(std::abs(mpu_sample.accel_g[2] - 1.0f) < 0.001f);
+        assert(std::abs(mpu_sample.gyro_deg_s[1] - 20.0f) < 0.05f);
+        assert(std::abs(mpu_sample.temperature_c - 36.53f) < 0.01f);
+
+        // 7. Raw Auto-DMA Stream TLP Ingestion & Parsing: BMI088 (Gyro LE)
+        std::array<uint8_t, 6> bmi_raw_burst{};
+        // Gyro Z = +10.0 dps (163.84 = 164 = 0x00A4 -> LE 0xA4, 0x00)
+        bmi_raw_burst[0] = 0x00; bmi_raw_burst[1] = 0x00; // X = 0
+        bmi_raw_burst[2] = 0x00; bmi_raw_burst[3] = 0x00; // Y = 0
+        bmi_raw_burst[4] = 0xA4; bmi_raw_burst[5] = 0x00; // Z = 164
+
+        Tlp64 bmi_stream_tlp = make_auto_dma_stream_tlp(Channel::Telemetry, bar::ImuBase, bmi_raw_burst, 111222333ULL, 1u);
+        auto bmi_sample = Bmi088::parse_tlp(bmi_stream_tlp);
+        assert(bmi_sample.timestamp_ns == 111222333ULL);
+        assert(std::abs(bmi_sample.gyro_deg_s[2] - 10.0f) < 0.05f);
+
+        // 8. AutoDmaManager ingest_stream_burst streaming directly to ring
+        target::common::AutoDmaManager<4> stream_mgr{};
+        SpscTlpRing<64u> test_stream_ring{};
+        assert(stream_mgr.register_channel(DmaChannelType::ImuBurst, bar::ImuBase, test_stream_ring));
+        assert(stream_mgr.ingest_stream_burst(DmaChannelType::ImuBurst, icm_raw_burst, 888999000ULL, 1u));
+        assert(!test_stream_ring.empty());
+        auto opt_stream_tlp = test_stream_ring.pop();
+        assert(opt_stream_tlp.has_value());
+        assert(opt_stream_tlp->wire.type == ASP_TLP_TYPE_DMA_STREAM);
+        assert(opt_stream_tlp->tag() == 1u);
+        auto streamed_sample = Icm42688P::parse_tlp(*opt_stream_tlp);
+        assert(streamed_sample.timestamp_ns == 888999000ULL);
+        assert(std::abs(streamed_sample.accel_g[1] - 1.0f) < 0.001f);
+    }
+
     std::cout << "PASSED!\n";
 }
 

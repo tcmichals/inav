@@ -8,27 +8,30 @@
 #ifndef ASP_TLP64_HPP
 #define ASP_TLP64_HPP
 
+#include "asp_tlp64.h"
 #include <cstdint>
 #include <cstddef>
 #include <cstring>
 #include <array>
 #include <span>
+#include <algorithm>
 
 namespace abstractx {
 
 enum class TlpType : uint8_t {
-    DmaStream   = 0x00u,
-    MemRead     = 0x01u,
-    MemWrite    = 0x02u,
-    Completion  = 0x03u,
+    DmaStream   = ASP_TLP_TYPE_DMA_STREAM, // 0x10
+    MemRead     = ASP_TLP_TYPE_MEM_RD,     // 0x01
+    MemWrite    = ASP_TLP_TYPE_MEM_WR,     // 0x02
+    Completion  = ASP_TLP_TYPE_CPL,        // 0x03
     Interrupt   = 0x04u,
-    Config      = 0x05u
+    Config      = 0x05u,
+    DmaConfig   = ASP_TLP_TYPE_DMA_CFG     // 0x11
 };
 
 enum class Channel : uint8_t {
-    Telemetry   = 0x00u,
+    Telemetry   = ASP_CHANNEL_TELEMETRY,   // 0x02 (IMU/Sensor Auto-DMA stream)
     Logging     = 0x01u,
-    Command     = 0x02u,
+    Command     = 0x00u,
     Actuator    = 0x03u
 };
 
@@ -73,6 +76,52 @@ public:
         tlp.wire.tag = tag;
         tlp.wire.target_address = addr;
         return tlp;
+    }
+
+    static Tlp64 make_stream_tx(Channel ch, uint32_t target_addr, std::span<const uint8_t> data, uint8_t tag = 0u) noexcept {
+        Tlp64 tlp{};
+        tlp.wire.type = ASP_TLP_TYPE_DMA_STREAM;
+        tlp.wire.channel = static_cast<uint8_t>(ch);
+        tlp.wire.tag = tag;
+        tlp.wire.target_address = target_addr;
+        const size_t copy_n = std::min(data.size(), sizeof(tlp.wire.payload));
+        tlp.wire.length = static_cast<uint16_t>(copy_n);
+        std::memcpy(tlp.wire.payload, data.data(), copy_n);
+        return tlp;
+    }
+
+    static Tlp64 make_hw_fusion_setup(const asp_tlp_auto_dma_cfg_t& cfg, uint8_t tag = 0u) noexcept {
+        Tlp64 packet{};
+        packet.wire.type = ASP_TLP_TYPE_DMA_CFG;
+        packet.wire.tag = tag;
+        packet.wire.channel = static_cast<uint8_t>(Channel::Command);
+        auto* p = reinterpret_cast<asp_tlp_auto_dma_cfg_t*>(packet.wire.payload);
+        *p = cfg;
+        p->cmd = ASP_DMA_CMD_SETUP;
+        return packet;
+    }
+
+    static Tlp64 make_hw_fusion_control(uint8_t channel_id, bool enable, uint8_t tag = 0u) noexcept {
+        Tlp64 packet{};
+        packet.wire.type = ASP_TLP_TYPE_DMA_CFG;
+        packet.wire.tag = tag;
+        packet.wire.channel = static_cast<uint8_t>(Channel::Command);
+        auto* p = reinterpret_cast<asp_tlp_auto_dma_cfg_t*>(packet.wire.payload);
+        p->cmd = enable ? ASP_DMA_CMD_ENABLE : ASP_DMA_CMD_DISABLE;
+        p->channel_id = channel_id;
+        return packet;
+    }
+
+    [[nodiscard]] std::span<const uint8_t> payload() const noexcept {
+        return std::span<const uint8_t>(wire.payload, sizeof(wire.payload));
+    }
+
+    [[nodiscard]] std::span<uint8_t> payload() noexcept {
+        return std::span<uint8_t>(wire.payload, sizeof(wire.payload));
+    }
+
+    [[nodiscard]] constexpr Channel channel() const noexcept {
+        return static_cast<Channel>(wire.channel);
     }
 
     [[nodiscard]] constexpr uint32_t target_address() const noexcept {

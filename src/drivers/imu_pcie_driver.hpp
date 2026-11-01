@@ -59,7 +59,40 @@ public:
         }
     }
 
+    static ImuSample parse_raw_burst_icm42688p(std::span<const uint8_t> raw, uint64_t timestamp_ns) noexcept {
+        ImuSample sample{};
+        sample.sensor_type = ImuSensorType::Icm42688P;
+        sample.timestamp_ns = timestamp_ns;
+        if (raw.size() < 14u) return sample;
+
+        const uint8_t* p = raw.data();
+        int16_t raw_temp = static_cast<int16_t>((p[0] << 8) | p[1]);
+        int16_t raw_ax   = static_cast<int16_t>((p[2] << 8) | p[3]);
+        int16_t raw_ay   = static_cast<int16_t>((p[4] << 8) | p[5]);
+        int16_t raw_az   = static_cast<int16_t>((p[6] << 8) | p[7]);
+        int16_t raw_gx   = static_cast<int16_t>((p[8] << 8) | p[9]);
+        int16_t raw_gy   = static_cast<int16_t>((p[10] << 8) | p[11]);
+        int16_t raw_gz   = static_cast<int16_t>((p[12] << 8) | p[13]);
+
+        sample.accel_g[0] = static_cast<float>(raw_ax) / 2048.0f;
+        sample.accel_g[1] = static_cast<float>(raw_ay) / 2048.0f;
+        sample.accel_g[2] = static_cast<float>(raw_az) / 2048.0f;
+
+        sample.gyro_deg_s[0] = static_cast<float>(raw_gx) / 16.4f;
+        sample.gyro_deg_s[1] = static_cast<float>(raw_gy) / 16.4f;
+        sample.gyro_deg_s[2] = static_cast<float>(raw_gz) / 16.4f;
+
+        sample.temperature_c = 25.0f + (static_cast<float>(raw_temp) / 132.48f);
+        return sample;
+    }
+
     static ImuSample parse_tlp(const Tlp64& tlp, ImuSensorType chip = ImuSensorType::Icm42688P) noexcept {
+        if (tlp.wire.type == ASP_TLP_TYPE_DMA_STREAM) {
+            if (chip == ImuSensorType::Icm42688P) {
+                return parse_raw_burst_icm42688p(tlp.payload(), tlp.wire.timestamp_ns);
+            }
+        }
+
         ImuSample sample{};
         sample.sensor_type = chip;
         sample.timestamp_ns = tlp.wire.timestamp_ns;

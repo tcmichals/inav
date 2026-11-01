@@ -251,6 +251,54 @@ public:
     }
 
     // -----------------------------------------------------------------------
+    // AUTO-DMA PROFILE & RAW BURST PARSER
+    // -----------------------------------------------------------------------
+    [[nodiscard]] static constexpr ImuAutoDmaProfile auto_dma_profile() noexcept {
+        return ImuAutoDmaProfile{
+            .burst_reg = icm42688p_regs::REG_TEMP_DATA1, // 0x1D
+            .burst_len = 14u,
+            .trigger_edge_rising = true,
+            .default_baud_hz = 24'000'000u
+        };
+    }
+
+    [[nodiscard]] static ImuSample parse_raw_burst(std::span<const uint8_t> raw, uint64_t timestamp_ns) noexcept {
+        ImuSample sample{};
+        sample.timestamp_ns = timestamp_ns;
+        if (raw.size() < 14u) {
+            return sample;
+        }
+
+        const uint8_t* p = raw.data();
+        // Hardware Auto-DMA burst starting at 0x1D:
+        // bytes 0..1:   Temperature (big-endian)
+        // bytes 2..7:   Accel X, Y, Z (big-endian)
+        // bytes 8..13:  Gyro X, Y, Z (big-endian)
+        int16_t raw_t  = static_cast<int16_t>((static_cast<int16_t>(p[0])  << 8) | p[1]);
+        int16_t raw_ax = static_cast<int16_t>((static_cast<int16_t>(p[2])  << 8) | p[3]);
+        int16_t raw_ay = static_cast<int16_t>((static_cast<int16_t>(p[4])  << 8) | p[5]);
+        int16_t raw_az = static_cast<int16_t>((static_cast<int16_t>(p[6])  << 8) | p[7]);
+        int16_t raw_gx = static_cast<int16_t>((static_cast<int16_t>(p[8])  << 8) | p[9]);
+        int16_t raw_gy = static_cast<int16_t>((static_cast<int16_t>(p[10]) << 8) | p[11]);
+        int16_t raw_gz = static_cast<int16_t>((static_cast<int16_t>(p[12]) << 8) | p[13]);
+
+        // ±16g: sensitivity = 2048 LSB/g (datasheet Table 3, AFS_SEL=0)
+        sample.accel_g[0] = static_cast<float>(raw_ax) * (1.0f / 2048.0f);
+        sample.accel_g[1] = static_cast<float>(raw_ay) * (1.0f / 2048.0f);
+        sample.accel_g[2] = static_cast<float>(raw_az) * (1.0f / 2048.0f);
+
+        // ±2000 dps: sensitivity = 16.4 LSB/(°/s) (datasheet Table 14, GFS_SEL=0)
+        sample.gyro_deg_s[0] = static_cast<float>(raw_gx) * (1.0f / 16.4f);
+        sample.gyro_deg_s[1] = static_cast<float>(raw_gy) * (1.0f / 16.4f);
+        sample.gyro_deg_s[2] = static_cast<float>(raw_gz) * (1.0f / 16.4f);
+
+        // Temp: T(°C) = (raw / 132.48) + 25  — datasheet section 4.13
+        sample.temperature_c = (static_cast<float>(raw_t) / 132.48f) + 25.0f;
+
+        return sample;
+    }
+
+    // -----------------------------------------------------------------------
     // TOP HALF: parse_tlp()
     //   Converts raw TLP payload bytes to ImuSample using ICM-42688P scale
     //   factors from datasheet Table 3 (accel) and Table 14 (gyro).
@@ -260,6 +308,10 @@ public:
     //   Temp  →  25°C + raw/326.8
     // -----------------------------------------------------------------------
     [[nodiscard]] static ImuSample parse_tlp(const Tlp64& tlp) noexcept {
+        if (tlp.wire.type == ASP_TLP_TYPE_DMA_STREAM) {
+            return parse_raw_burst(tlp.payload(), tlp.wire.timestamp_ns);
+        }
+
         ImuSample sample{};
         sample.timestamp_ns = tlp.wire.timestamp_ns;
 
@@ -384,6 +436,14 @@ public:
     }
 
     [[nodiscard]] bool is_initialized() const noexcept { return initialized_; }
+
+    [[nodiscard]] static constexpr ImuAutoDmaProfile auto_dma_profile() noexcept {
+        return Icm42688PDriver<bus::FakeSpiBus>::auto_dma_profile();
+    }
+
+    [[nodiscard]] static ImuSample parse_raw_burst(std::span<const uint8_t> raw, uint64_t timestamp_ns) noexcept {
+        return Icm42688PDriver<bus::FakeSpiBus>::parse_raw_burst(raw, timestamp_ns);
+    }
 
     [[nodiscard]] static ImuSample parse_tlp(const Tlp64& tlp) noexcept {
         return Icm42688PDriver<bus::FakeSpiBus>::parse_tlp(tlp);

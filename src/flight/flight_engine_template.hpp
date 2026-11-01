@@ -92,19 +92,22 @@ public:
             while (!telemetry_ring.empty()) {
                 Tlp64 tlp = co_await ImuSampleAwaiter<SpscTlpRing<64>>{telemetry_ring};
 
-                // Asynchronous BAR Address Demultiplexing (Auto-DMA and Parallel I/O)
+                // Asynchronous BAR Address Demultiplexing & Auto-DMA Stream Ingestion
                 const uint32_t bar_id = tlp.wire.target_address & 0xF000u;
+                const uint8_t tlp_type = tlp.wire.type;
+                const uint8_t tag = tlp.tag();
+                const bool is_stream = (tlp_type == ASP_TLP_TYPE_DMA_STREAM) || (tlp.channel() == Channel::Telemetry);
 
-                // Event-Driven Barometer Altitude Correction (Asynchronous I2C DMA completion)
-                if (bar_id == bar::BaroBase) {
+                // Event-Driven Barometer Altitude Correction (Asynchronous I2C DMA completion or Tag 4)
+                if (bar_id == bar::BaroBase || (is_stream && tag == 4)) {
                     drivers::BaroSample baro = BaroDriver::parse_tlp(tlp);
                     pos_estimator_.correct_baro(static_cast<float>(baro.altitude_cm) * 0.01f);
                     (void)logging_ring.push(tlp);
                     continue;
                 }
 
-                // Event-Driven GPS Position & Velocity Correction (Asynchronous UART DMA completion)
-                if (bar_id == bar::GpsBase) {
+                // Event-Driven GPS Position & Velocity Correction (Asynchronous UART DMA completion or Tag 2)
+                if (bar_id == bar::GpsBase || (is_stream && tag == 2) || (tlp.wire.target_address == 0x40005000u)) {
                     const uint8_t* p = tlp.wire.payload;
                     int32_t itow = 0;
                     int32_t lat_i = 0;
@@ -147,8 +150,8 @@ public:
                     continue;
                 }
 
-                // Event-Driven Magnetometer 3D Vector Correction (Asynchronous I2C DMA completion)
-                if (bar_id == bar::MagBase) {
+                // Event-Driven Magnetometer 3D Vector Correction (Asynchronous I2C DMA completion or Tag 3)
+                if (bar_id == bar::MagBase || (is_stream && tag == 3) || (tlp.wire.target_address == 0x40003000u)) {
                     drivers::MagSample mag = drivers::MagDriver::parse_tlp(tlp);
                     latest_mag_bf_ = Vector3f{mag.mag_mgauss[0], mag.mag_mgauss[1], mag.mag_mgauss[2]};
                     has_mag_ = true;
@@ -156,8 +159,8 @@ public:
                     continue;
                 }
 
-                // Event-Driven Airspeed Dynamic Pressure (Asynchronous I2C DMA completion)
-                if (bar_id == bar::PitotBase) {
+                // Event-Driven Airspeed Dynamic Pressure (Asynchronous I2C DMA completion or Tag 5)
+                if (bar_id == bar::PitotBase || (is_stream && tag == 5) || (tlp.wire.target_address == 0x4000A000u)) {
                     const uint8_t* raw = tlp.wire.payload;
                     uint16_t dp_raw = static_cast<uint16_t>(((raw[0] & 0x3Fu) << 8u) | raw[1]);
                     const float dp_psi = (static_cast<float>(dp_raw) - 1638.3f) * (1.0f / 13106.4f) - 0.5f;
@@ -170,7 +173,7 @@ public:
                     continue;
                 }
 
-                // High-Rate IMU Path (DRDY Auto-DMA: bar::ImuBase or default)
+                // High-Rate IMU Path (DRDY Auto-DMA: Tag 1, bar::ImuBase, or default stream)
                 auto imu = ImuDriver::parse_tlp(tlp);
 
                 // 2. Dynamic Gyro Notch Spectral Analysis (INAV gyroanalyse.c)

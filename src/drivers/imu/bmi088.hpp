@@ -151,9 +151,47 @@ public:
     }
 
     // -----------------------------------------------------------------------
+    // AUTO-DMA PROFILE & RAW BURST PARSER
+    // -----------------------------------------------------------------------
+    [[nodiscard]] static constexpr ImuAutoDmaProfile auto_dma_profile() noexcept {
+        return ImuAutoDmaProfile{
+            .burst_reg = 0x02u, // RATE_X_LSB (Gyro 6-byte burst)
+            .burst_len = 6u,
+            .trigger_edge_rising = true,
+            .default_baud_hz = 10'000'000u
+        };
+    }
+
+    [[nodiscard]] static ImuSample parse_raw_burst(std::span<const uint8_t> raw, uint64_t timestamp_ns) noexcept {
+        ImuSample sample{};
+        sample.timestamp_ns = timestamp_ns;
+        if (raw.size() < 6u) {
+            return sample;
+        }
+
+        const uint8_t* p = raw.data();
+        // BMI088 gyro 6-byte burst (little-endian: X_L, X_H, Y_L, Y_H, Z_L, Z_H)
+        int16_t raw_gx = static_cast<int16_t>((static_cast<int16_t>(p[1]) << 8) | p[0]);
+        int16_t raw_gy = static_cast<int16_t>((static_cast<int16_t>(p[3]) << 8) | p[2]);
+        int16_t raw_gz = static_cast<int16_t>((static_cast<int16_t>(p[5]) << 8) | p[4]);
+
+        sample.gyro_deg_s[0] = static_cast<float>(raw_gx) / 16.384f;
+        sample.gyro_deg_s[1] = static_cast<float>(raw_gy) / 16.384f;
+        sample.gyro_deg_s[2] = static_cast<float>(raw_gz) / 16.384f;
+        sample.accel_g[2] = 1.0f; // Default 1G Z if gyro-only burst
+        sample.temperature_c = 25.0f;
+
+        return sample;
+    }
+
+    // -----------------------------------------------------------------------
     // TOP HALF: parse_tlp()
     // -----------------------------------------------------------------------
     [[nodiscard]] static ImuSample parse_tlp(const Tlp64& tlp) noexcept {
+        if (tlp.wire.type == ASP_TLP_TYPE_DMA_STREAM) {
+            return parse_raw_burst(tlp.payload(), tlp.wire.timestamp_ns);
+        }
+
         ImuSample sample{};
         sample.timestamp_ns = tlp.wire.timestamp_ns;
 
@@ -236,6 +274,14 @@ public:
     }
 
     [[nodiscard]] bool is_initialized() const noexcept { return initialized_; }
+
+    [[nodiscard]] static constexpr ImuAutoDmaProfile auto_dma_profile() noexcept {
+        return Bmi088Driver<bus::FakeSpiBus>::auto_dma_profile();
+    }
+
+    [[nodiscard]] static ImuSample parse_raw_burst(std::span<const uint8_t> raw, uint64_t timestamp_ns) noexcept {
+        return Bmi088Driver<bus::FakeSpiBus>::parse_raw_burst(raw, timestamp_ns);
+    }
 
     [[nodiscard]] static ImuSample parse_tlp(const Tlp64& tlp) noexcept {
         return Bmi088Driver<bus::FakeSpiBus>::parse_tlp(tlp);

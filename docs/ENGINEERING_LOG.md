@@ -530,6 +530,39 @@ This engineering log records design decisions, hardware trade-offs, architectura
 - **Verification Evidence**:
   - `python3 tools/run_all_validations.py`: Full master validation suite execution.
 
+---
+
+### [2026-11-01] Generic Auto-DMA Support for Any IMU with ISR/GPIO Trigger
+- **Category**: `feature` / `architecture`
+- **Decision**:
+  1. Defined `ImuAutoDmaProfile` and C++20 `AutoDmaCapableImu` concept in `src/drivers/imu/imu_base.hpp` and `src/target/common/auto_dma_manager.hpp` ensuring any IMU sensor providing a DRDY/GPIO interrupt can be ingested autonomously via AbstractX Auto-DMA hardware (`IoEngine` / `asp_imu_auto_dma.sv`).
+  2. Implemented hardware Auto-DMA burst profiles, raw byte parsers (`parse_raw_burst`), and stream TLP handlers (`parse_tlp`) for `ICM-42688-P` (reg 0x1D, 14 bytes, Temp[0..1], Accel[2..7], Gyro[8..13]), `MPU-6000` (reg 0x3B, 14 bytes, Accel[0..5], Temp[6..7], Gyro[8..13]), and `BMI088` (reg 0x02, 6 bytes, Gyro LE).
+  3. Added Auto-DMA configuration builders (`make_imu_auto_dma_cfg`, `make_imu_auto_dma_setup_tlp`, `make_auto_dma_control_tlp`, `make_auto_dma_stream_tlp`) synthesizing 64-byte `ASP_TLP_TYPE_DMA_CFG` (0x11) and `ASP_TLP_TYPE_DMA_STREAM` (0x10) packets.
+  4. Updated `FlightEngineTemplate` event loop to demultiplex incoming `ASP_TLP_TYPE_DMA_STREAM` / `Channel::Telemetry` packets by `tlp.tag()` (Tag 1 = IMU, Tag 2 = GPS, Tag 3 = Mag, Tag 4 = Baro, Tag 5 = Pitot).
+  5. Implemented comprehensive unit tests in `test/test_main.cpp` (Section 13) asserting concept compliance, setup TLP synthesis, control TLP synthesis, raw burst parsing across all 3 IMUs, and end-to-end stream ingestion via `AutoDmaManager`.
+- **Rationale**:
+  1. Offloads the 8 kHz IMU SPI transaction from the CPU core entirely to FPGA / PIO / DMA hardware upon DRDY edge interrupt, reducing CPU flight loop latency to sub-microsecond TLP consumption.
+  2. Concept-based abstraction allows seamless addition of new IMUs (e.g. LSM6DSOX, BMI270, ICM-42605) without altering `FlightEngine` or `AutoDmaManager`.
+  3. Zero dynamic memory allocation and bounded execution maintained across all burst ingestion and parsing pathways in adherence to MISRA C++:2023 and DO-178C avionics standards.
+  4. Strictly enforced AbstractX isolation (zero edits in `external/AbstractX` or `/home/tcmichals/projects/AbstractX`).
+- **Files Modified**:
+  - `src/drivers/imu/imu_base.hpp`
+  - `src/target/common/auto_dma_manager.hpp`
+  - `src/drivers/imu/icm42688p.hpp`
+  - `src/drivers/imu/mpu6000.hpp`
+  - `src/drivers/imu/bmi088.hpp`
+  - `src/drivers/imu_pcie_driver.hpp`
+  - `src/flight/flight_engine_template.hpp`
+  - `test/test_main.cpp`
+  - `TODO.md`
+  - `docs/ENGINEERING_LOG.md`
+- **Verification Evidence**:
+  - C++20 Unit Tests (`build/run_unit_tests`): All 20 test suites passed 100% (including new Auto-DMA concept assertions, TLP configuration generators, raw burst decoders, and ring streaming).
+  - CTest (`cd build && ctest --output-on-failure`): 5/5 test targets passed 100% (`UnitTests`, `HardwareTest`, `SubmoduleDifferentialTest`, `SchedulerBenchmark`, `FullStackParityTest`).
+  - Upstream Differential Parity (`python3 tools/compare_inav_parity.py`): 6/6 subsystems verified 100% bit-exact match against upstream INAV C codebase.
+  - Master Validation Pipeline (`python3 tools/run_all_validations.py`): All 8 execution steps passed 100% including live SITL TCP 5760 MSP handshake.
+
+
 
 
 
