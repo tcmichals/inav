@@ -32,22 +32,13 @@ else()
     add_compile_options($<$<CONFIG:Release>:-O3> $<$<CONFIG:Release>:-DNDEBUG>)
 endif()
 
-# Locate Canonical AbstractX Header Directory
-if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/../../AbstractX/include/asp_tlp64.hpp")
-    set(ABSTRACTX_PATH "${CMAKE_CURRENT_SOURCE_DIR}/../../AbstractX" CACHE PATH "Path to AbstractX repository" FORCE)
-    message(STATUS "Found canonical AbstractX headers at: ${ABSTRACTX_PATH}/include")
-elseif(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/external/AbstractX/include/asp_tlp64.hpp")
-    set(ABSTRACTX_PATH "${CMAKE_CURRENT_SOURCE_DIR}/external/AbstractX" CACHE PATH "Path to AbstractX repository" FORCE)
-    message(STATUS "Found AbstractX submodule headers at: ${ABSTRACTX_PATH}/include")
-elseif(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/../AbstractX/include/asp_tlp64.hpp")
-    set(ABSTRACTX_PATH "${CMAKE_CURRENT_SOURCE_DIR}/../AbstractX" CACHE PATH "Path to AbstractX repository" FORCE)
-    message(STATUS "Found canonical AbstractX headers at: ${ABSTRACTX_PATH}/include")
-elseif(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/include/asp_tlp64.hpp")
-    set(ABSTRACTX_PATH "${CMAKE_CURRENT_SOURCE_DIR}")
-    message(STATUS "Using local AbstractX headers at: ${ABSTRACTX_PATH}/include")
-else()
-    message(FATAL_ERROR "AbstractX headers not found. Please initialize external/AbstractX submodule or set ABSTRACTX_PATH.")
+# AbstractX location: passed in by the workspace, otherwise this repo's submodule. Never guessed from
+# where the checkout sits, so every build of one checkout uses the same AbstractX.
+set(ABSTRACTX_PATH "${CMAKE_CURRENT_SOURCE_DIR}/external/AbstractX" CACHE PATH "Path to AbstractX repository")
+if(NOT EXISTS "${ABSTRACTX_PATH}/include/asp_tlp64.hpp")
+    message(FATAL_ERROR "AbstractX headers not found at ${ABSTRACTX_PATH}. Pass -DABSTRACTX_PATH= or initialize external/AbstractX.")
 endif()
+message(STATUS "Using AbstractX at: ${ABSTRACTX_PATH}")
 
 # Include Directories
 include_directories(

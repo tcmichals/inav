@@ -562,11 +562,13 @@ This engineering log records design decisions, hardware trade-offs, architectura
   - Upstream Differential Parity (`python3 tools/compare_inav_parity.py`): 6/6 subsystems verified 100% bit-exact match against upstream INAV C codebase.
   - Master Validation Pipeline (`python3 tools/run_all_validations.py`): All 8 execution steps passed 100% including live SITL TCP 5760 MSP handshake.
 
+---
 
-
-
-
-
-
-
+### [2026-11-07] AbstractX Location Passed In, Not Guessed
+- **Category**: `product-bug` / `build`
+- **Problem**: `CMakeLists.txt` searched `../../AbstractX`, `external/AbstractX`, then `../AbstractX`, and used `FORCE`, so a build's AbstractX depended on where the checkout sat and `-DABSTRACTX_PATH=` was overwritten. Four existing build folders held three different AbstractX paths, one of them a live working copy.
+- **Decision**: use `ABSTRACTX_PATH` if passed in, otherwise this repo's `external/AbstractX`, and stop with an error if the headers are not there. The `tcmichals/flight` workspace passes it in.
+- **Files Modified**: `CMakeLists.txt`, `docs/ENGINEERING_LOG.md`.
+- **Verification Evidence**: from the `flight` workspace, `cmake --workflow --preset sitl`: exit 0, 5 of 5 ctest tests passed (`UnitTests`, `HardwareTest`, `SubmoduleDifferentialTest`, `SchedulerBenchmark`, `FullStackParityTest`); configure with `-DABSTRACTX_PATH=/nonexistent` stops with the error.
+- **Not Verified**: Pico build, hardware. This does not put INAV on the AbstractX runtime: it still does not link `abstractx_core` and still finds its own `include/asp_tlp64.hpp` first.
 
