@@ -48,10 +48,16 @@ flowchart LR
 * **Implemented** (2026-11-07): INAV's copies of `asp_tlp64.hpp` and `pcie_bar_map.hpp` are deleted, `length` is in words, checked by `test/test_tlp_wire_format.cpp`. **Not implemented yet**: the link and the models in the plugin.
 
 ### `[SPEC-SITL-03]` The link
-* **Requirement**: The SITL binary and the plugin exchange whole 64-byte TLPs over a local socket. There is no CRC: INAV never reads or writes the TLP's last 4 bytes, and on this link they are 0 (AbstractX uses them only on serial links). The link counts dropped TLPs and does nothing else.
-* **Why**: CRC and delivery belong to the transport, never to INAV (owner, 2026-11-07).
+* **Requirement**: The SITL binary and the plugin exchange whole 64-byte TLPs over TCP (owner, 2026-11-08).
+  * INAV listens, by default on `127.0.0.1:5770` (`--tlp-port`, `--tlp-bind`); the plugin connects. One plugin at a time; a new connection is refused while one is open.
+  * Both ends set `TCP_NODELAY` (owner, 2026-11-08): one TLP per write, so Nagle would delay every lockstep step.
+  * Framing is the fixed size: a TLP is the next 64 bytes of the stream. A read may return part of a TLP or several; the receiver assembles exactly 64 bytes before using one. No length prefix, no delimiter.
+  * Inbound routing by `type`: `DMA_STREAM` goes to the stream ring the drivers read, `CPL_D` / `CPL` to the completion ring of `TlpChannel`; anything else is counted and discarded.
+  * The link carries each TLP's 64 bytes unchanged; it adds and checks nothing. No CRC.
+  * The link counts TLPs in and out, TLPs dropped because a ring was full, unexpected types, and disconnects, and does nothing else. A disconnect discards a partly received TLP and leaves INAV waiting for the next connection; the devices are then silent, which INAV must treat as sensor and RC loss.
+* **Why**: CRC and delivery belong to the transport, never to INAV (owner, 2026-11-07). TCP delivers in order without loss, which lockstep needs ([SPEC-SITL-04]), and lets Studio run on another machine.
 * **Verified by**: `sitl-mission-review`
-* **Not implemented yet**: socket type and port to be decided (§5).
+* **Not implemented yet**
 
 ### `[SPEC-SITL-04]` Lockstep, paced by the IMU
 * **Requirement**: Simulated time comes only from the TLP `timestamp_ns`, never the wall clock. The IMU sample is the clock: INAV runs one loop step per IMU sample, and the plugin sends the next sample only after it has the motor commands for the previous one. The loop rate is 1 kHz of simulated time. SITL may run slower than real time.
@@ -119,8 +125,7 @@ Problems found go in [`ENGINEERING_LOG.md`](ENGINEERING_LOG.md).
 
 ## 5. Open
 
-* Link socket type and port.
-* Which register map governs device addresses: INAV's `include/pcie_bar_map.hpp` or AbstractX's.
+* Lockstep needs a correct runtime: INAV's `coroutine_task.hpp` awaiters (`ImuSampleAwaiter`, `YieldTick`) suspend without arranging a wake, and `sitl_main.cpp` calls `.resume()` on the outer task every 1 ms, undefined behaviour while it awaits a child. The loop also uses a `% 5` prescaler and still runs a barometer task. Proposed: move to AbstractX's runtime ([§4] step 5) before lockstep, not after.
 * What happens to `src/target/sitl/hardware_simulator.hpp` once the plugin has the physics.
 * GPS sentences and rate (GGA and RMC at 5 or 10 Hz proposed).
 * Idea, not a requirement yet: a flight trainer (phone sticks into Studio, beginner rates and angle mode, instructor takeover, lessons as scenario scripts, replay).

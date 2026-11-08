@@ -238,6 +238,16 @@ else()
     # @impl [SPEC-SITL-02] docs/SITL_SIMULATOR.md: INAV's TLPs match AbstractX's wire format.
     add_executable(tlp_wire_format_test test/test_tlp_wire_format.cpp)
     add_test(NAME TlpWireFormatTest COMMAND tlp_wire_format_test)
+
+    # @impl [SPEC-SITL-03] docs/SITL_SIMULATOR.md: the SITL TLP link over TCP.
+    add_executable(sitl_tlp_link_test test/test_sitl_tlp_link.cpp)
+    add_test(NAME SitlTlpLinkTest COMMAND sitl_tlp_link_test)
+    find_package(Python3 COMPONENTS Interpreter)
+    if(Python3_FOUND)
+        add_test(NAME SitlLinkPluginTest
+                 COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/test/test_sitl_link.py)
+        set_tests_properties(SitlLinkPluginTest PROPERTIES ENVIRONMENT "ABSTRACTX_PATH=${ABSTRACTX_PATH}")
+    endif()
 endif()
 
 

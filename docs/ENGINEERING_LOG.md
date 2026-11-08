@@ -607,3 +607,15 @@ This engineering log records design decisions, hardware trade-offs, architectura
 - **Verification Evidence**: from the `flight` workspace: `ctest --test-dir build/sitl` 6 of 6 passed; ASan/UBSan build 6 of 6 passed, no sanitizer report; SITL ran 5 s, stopped cleanly, 310 TLPs logged; configure without `ABSTRACTX_PATH` stops with the error; standalone configure with `-DABSTRACTX_PATH=../AbstractX` succeeds.
 - **Not Verified**: the Pico build (no `arm-none-eabi-gcc` on this PC). Pico files changed only by the include rename.
 - **Still duplicated, needs porting rather than deleting**: the coroutine engine `src/abstractx_engine/coroutine_task.hpp` (AbstractX has `Task`, `yield`, `when_all`, `when_any` in `asp_coro.hpp`); `src/drivers/bus/tlp_channel.hpp`, `src/target/common/pcie_tlp_scheduler.hpp` and `src/target/linux_common/linux_fpga_transport.hpp` against AbstractX's awaiters and Linux target; `src/target/pico2_rp2350/lwipopts.h` and the used Pico target files against `AbstractX/targets/pico2w_rp2350`. Auto-DMA setup packets (`DMA_CFG`) built in `auto_dma_manager.hpp` are not defined in AbstractX's TLP bus specification, and have not been checked against `abstractx-fpga/rtl/imu/asp_imu_auto_dma.sv` or `pio2/src/programs/imu_spi_burst.pio`.
+
+---
+
+### [2026-11-08] SITL TLP Link over TCP [SPEC-SITL-03]
+- **Category**: `architecture`
+- **Decisions** (owner): TCP, not a Unix or UDP socket; `TCP_NODELAY` on both ends; no CRC on the link. INAV listens on `127.0.0.1:5770`, the plugin connects; framing is the fixed 64 bytes.
+- **Added**: `src/target/sitl/sitl_tlp_link.hpp` (listener, 64-byte reassembly, routing by type: `DMA_STREAM` to the stream ring, `CPL_D`/`CPL` to the completion ring, counters for in, out, ring-full drops, unexpected types, disconnects, refused connections); `tools/studio_plugin/sitl_link.py` (plugin client; header layout from AbstractX's `tools/abstractx_wire.py`, no copy); `test/test_sitl_tlp_link.cpp` (`SitlTlpLinkTest`) and `test/test_sitl_link.py` (`SitlLinkPluginTest`).
+- **Mistake**: the first version of `send()` zeroed bytes 60..63 on the way out, a special case for a CRC field nobody uses here. Removed; the link sends the 64 bytes unchanged and the test checks all 64.
+- **Test check of the test**: removing the `TCP_NODELAY` `setsockopt` makes `TCP_NODELAY set on the accepted socket` fail (1 failure); restored, 0 failures.
+- **Verification Evidence**: `ctest --test-dir build/sitl/inav` 8 of 8 passed; ASan/UBSan build (`build/sitl-asan`) 8 of 8 passed, no sanitizer report; no compiler warnings under `-Wall -Wextra -Wpedantic -Wconversion`.
+- **Not Verified**: the link is not used by `sitl_main.cpp` yet; no C++-to-Python run (comes with lockstep); round-trip latency not measured; TSan.
+- **Found, blocks lockstep** (`docs/SITL_SIMULATOR.md` §5): INAV's `ImuSampleAwaiter` and `YieldTick` suspend without arranging a wake, and `sitl_main.cpp` calls `.resume()` on the outer task every 1 ms while it awaits a child (undefined behaviour). The loop also uses a `% 5` prescaler and runs a barometer task although the aircraft has none.
