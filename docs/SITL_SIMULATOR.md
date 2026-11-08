@@ -1,189 +1,135 @@
-# Software-In-The-Loop (SITL) Simulator & 6-DOF Physics Engine
+# SITL: INAV on the AbstractX TLP API, with no hardware
 
-> [!IMPORTANT]
-> **TARGET**: Linux Desktop (x86_64 / ARM64) & CI Validation.
-> **SOURCE ENTRY POINT**: [`src/target/sitl/sitl_main.cpp`](../src/target/sitl/sitl_main.cpp)
-> **PHYSICS ENGINE**: [`src/target/sitl/hardware_simulator.hpp`](../src/target/sitl/hardware_simulator.hpp)
-> **MSP TCP PORT**: `5760` (INAV / Betaflight Configurator)
-> **BLACKBOX UDP PORT**: `19000` (Live Telemetry Stream)
+Status: **plan, nothing below is implemented yet** (2026-11-07). What exists today is described at the end.
 
----
+## 1. Why
 
-## 1. SITL Simulator Architecture
+SITL is where INAV is moved onto AbstractX's TLP API and where the problems that move exposes are found and fixed, before any hardware. Every emulated device speaks the real 64-byte TLP format, so a wrong field, channel, byte order or timing in INAV fails here instead of on the aircraft.
 
-The `inav-abstractx` SITL simulator executes the full, unmodified C++20 flight control stack in user space on a Linux host. Sensor inputs, motor outputs, and flight dynamics are coupled in a closed-loop real-time coroutine scheduler.
+## 2. The parts
 
-```
-+───────────────────────────────────────────────────────────────────────────────────────────+
-|                                  INAV-ABSTRACTX SITL PIPELINE                             |
-+───────────────────────────────────────────────────────────────────────────────────────────+
-|                                                                                           |
-|   +──────────────────────────+                  +─────────────────────────────────────+   |
-|   |   INAV Configurator      |                  |   Blackbox Explorer (.BBL)          |   |
-|   |   (TCP Port 5760)        |                  |   (UDP Port 19000 Live Stream)      |   |
-|   +─────────────▲────────────+                  +──────────────────▲──────────────────+   |
-|                 │ (MSP v1/v2)                                      │ (BareCTF 64B TLPs)   |
-|   +─────────────▼──────────────────────────────────────────────────┴──────────────────+   |
-|   |                        SITL Flight Engine (sitl_main.cpp)                         |   |
-|   |   • C++20 Stackless Coroutines (`run_flight_loop`, `baro_sensor`, `gps_sensor`)   |   |
-|   |   • Betaflight Rate PID (Feedforward 2.0, Anti-Gravity, D-Min, Kalman Filter)     |   |
-|   |   • Mahony AHRS Quaternion Attitude Filter & INAV Inertial Position Estimator     |   |
-|   |   • 3D Autonomous Waypoint & S-Curve RTH Navigation Engine                        |   |
-|   |   • QuadX Motor Mixer (Motors 0..3)                                               |   |
-|   +─────────────────────────────┬─────────────────────────────────▲───────────────────+   |
-|                                 │                                 │                       |
-|                   (Motor PWMs:  │                                 │ (Synthesized IMU      |
-|                    1000..2000µs)│                                 │  DMA 64B TLPs)        |
-|                                 ▼                                 │                       |
-|   +───────────────────────────────────────────────────────────────┴───────────────────+   |
-|   |              6-DOF Rigid-Body Multicopter Physics Engine                          |   |
-|   |                         (hardware_simulator.hpp)                                  |   |
-|   |   • Differential Motor Thrust -> 3-Axis Torques (Roll, Pitch, Yaw)                |   |
-|   |   • Rotational Dynamics Integration (alpha = tau / I - d * omega)                 |   |
-|   |   • Earth Gravity Vector Projection (Ax, Ay, Az) & Gyro Rates (Gx, Gy, Gz)        |   |
-|   +───────────────────────────────────────────────────────────────────────────────────+   |
-+───────────────────────────────────────────────────────────────────────────────────────────+
+```mermaid
+flowchart LR
+    subgraph inav_bin["inav_abstractx_sitl (C++)"]
+        FC["Flight code and chip drivers<br/>(unchanged)"]
+        LINK["SITL TLP link<br/>(the only SITL part)"]
+        MSP["MSP server, TCP 5760"]
+        FC <--> LINK
+        FC <--> MSP
+    end
+    subgraph studio["AbstractX Studio"]
+        subgraph plugin["INAV Studio plugin (Python, in this repo)"]
+            DEV["Device models"]
+            PHY["Physics"]
+            CTL["Sticks, switches, faults"]
+            SCR["Scenario scripts"]
+            CTL --> DEV
+            SCR --> DEV
+            DEV <--> PHY
+        end
+    end
+    CFG["INAV Configurator"]
+    LINK <-- "64-byte TLPs" --> DEV
+    CFG <-- "MSP over TCP" --> MSP
 ```
 
----
+## 3. Requirements
 
-## 2. 6-DOF Multicopter Physics Engine Mathematics
+### `[SPEC-SITL-01]` Only the transport differs
+* **Requirement**: The SITL binary runs the same flight code and chip drivers as the aircraft. The only SITL-specific code is the TLP link (§3, [SPEC-SITL-03]). No `#ifdef` and no SITL branch in flight code or drivers.
+* **Why**: SITL proves nothing about the aircraft if it runs different code.
+* **Verified by**: `sitl-mission-review`
+* **Not implemented yet**: today SITL drives the loop from `sitl_main.cpp` and feeds the IMU straight into a ring.
 
-The physics engine in [`src/target/sitl/hardware_simulator.hpp`](../src/target/sitl/hardware_simulator.hpp) calculates closed-loop aerodynamics and inertial dynamics for standard **QuadX** geometry:
+### `[SPEC-SITL-02]` AbstractX's TLP format, not AbstractX's simulation
+* **Requirement**: Every TLP on the link uses AbstractX's 64-byte layout and its type and channel values (`AbstractX/include/asp_tlp64.hpp`, `AbstractX/docs/tier2_contracts/TLP_BUS_SPECIFICATION.md`). `length` is AbstractX's `length_dw`, a count of 32-bit words: a request for N bytes asks for `(N + 3) / 4` words, and the receiver uses `length_bytes()`. Device addresses come from AbstractX's register map (`AbstractX/include/pcie_bar_map.hpp`). INAV keeps no copy of the format or the map (owner, 2026-11-07). SITL does not use AbstractX's simulation, fakes or loopback: the link, the device models and the physics are INAV's.
+* **Why**: INAV must be on the same API it uses on hardware, and the emulation is INAV's choice of devices and aircraft (owner, 2026-11-07).
+* **Verified by**: `sitl-mission-review`
+* **Implemented** (2026-11-07): INAV's copies of `asp_tlp64.hpp` and `pcie_bar_map.hpp` are deleted, `length` is in words, checked by `test/test_tlp_wire_format.cpp`. **Not implemented yet**: the link and the models in the plugin.
 
-```text
-                             (Front Left)   (Front Right)
-                                 [M3]           [M1]
-                                   \             /
-                                    \   (CW)    / (CCW)
-                                     \         /
-                                      \       /
-                                       +─────+
-                                       |     |
-                                       +─────+
-                                      /       \
-                                     /         \
-                                    /   (CCW)   \ (CW)
-                                   /             \
-                                 [M2]           [M0]
-                             (Rear Left)    (Rear Right)
-```
+### `[SPEC-SITL-03]` The link
+* **Requirement**: The SITL binary and the plugin exchange whole 64-byte TLPs over a local socket. There is no CRC: INAV never reads or writes the TLP's last 4 bytes, and on this link they are 0 (AbstractX uses them only on serial links). The link counts dropped TLPs and does nothing else.
+* **Why**: CRC and delivery belong to the transport, never to INAV (owner, 2026-11-07).
+* **Verified by**: `sitl-mission-review`
+* **Not implemented yet**: socket type and port to be decided (§5).
 
-### A. Motor Thrust & Torque Generation
-Given motor PWM commands $P_i \in [1000, 2000]\,\mu\text{s}$, normalized thrust $T_i \in [0.0, 1.0]$ is computed as:
-$$T_i = \frac{P_i - 1000}{1000}$$
+### `[SPEC-SITL-04]` Lockstep, paced by the IMU
+* **Requirement**: Simulated time comes only from the TLP `timestamp_ns`, never the wall clock. The IMU sample is the clock: INAV runs one loop step per IMU sample, and the plugin sends the next sample only after it has the motor commands for the previous one. The loop rate is 1 kHz of simulated time. SITL may run slower than real time.
+* **Why**: Python cannot produce samples on time at 1 kHz; lockstep makes timing jitter irrelevant and makes every run repeatable. It is the primary-paced pattern INAV already uses.
+* **Verified by**: `sitl-mission-review`
+* **Not implemented yet**
 
-The 3-axis aerodynamic torques are derived from the QuadX arm geometry:
-* **Roll Torque ($\tau_{\text{roll}}$)** (Left vs Right differential thrust):
-  $$\tau_{\text{roll}} = K_{\text{torque}} \cdot \big((T_0 + T_1) - (T_2 + T_3)\big)$$
-* **Pitch Torque ($\tau_{\text{pitch}}$)** (Front vs Rear differential thrust):
-  $$\tau_{\text{pitch}} = K_{\text{torque}} \cdot \big((T_1 + T_3) - (T_0 + T_2)\big)$$
-* **Yaw Torque ($\tau_{\text{yaw}}$)** (Counter-rotating propeller drag balance):
-  $$\tau_{\text{yaw}} = K_{\text{yaw}} \cdot \big((T_1 + T_2) - (T_0 + T_3)\big)$$
+### `[SPEC-SITL-05]` The devices
+* **Requirement**: The plugin emulates exactly the aircraft's devices, each defined only by the TLPs it exchanges. The physical bus (SPI, I2C, UART, PIO) belongs to the board and is not emulated.
 
-### B. Angular Rate Integration with Rotational Damping
-Rotational acceleration $\vec{\alpha} = [\alpha_x, \alpha_y, \alpha_z]^T$ is computed considering airframe rotational inertia $I$ and aerodynamic damping $d_{\text{aero}}$:
-$$\vec{\alpha} = \frac{\vec{\tau}}{I} - d_{\text{aero}} \cdot \vec{\omega}$$
+  | Device | INAV sends | The model returns |
+  | :--- | :--- | :--- |
+  | IMU, ICM-42688-P | Register reads and writes | Its register map: ID, configuration, data. A sample per step from the physics, paced as data-ready |
+  | Compass, QMC5883L | Register reads and writes | Its register map: ID, status, field for the current heading and tilt |
+  | GPS | Bytes it sends are accepted | NMEA sentences as a byte stream, from the physics |
+  | RC, PWM decoder | Nothing | 6 channel pulse widths in µs (16-bit, little-endian), about 50 Hz. On signal loss it stops sending |
+  | Motors, DShot600 | 4 motor commands | Nothing; commands go to the physics |
+  | LEDs, NeoPixel | Colour frames | Nothing; frames are shown |
 
-Discrete integration advances the body-frame gyro rates:
-$$\vec{\omega}_{k} = \vec{\omega}_{k-1} + \vec{\alpha} \cdot \Delta t$$
+  There is no barometer; INAV must run without one.
+* **Why**: SITL has to exercise the drivers the aircraft runs, at the TLP level they actually use.
+* **Verified by**: `sitl-mission-review`
+* **Not implemented yet**: today only an ICM-42688-P sample is pushed. INAV also has two PWM parsers with opposite byte order (`src/drivers/rc/pwm_rc.hpp`, `src/drivers/rc_driver.hpp`), and `PwmRc` detects RC loss from throttle below 900 µs rather than from missing frames.
 
-### C. Attitude Integration & Accelerometer Gravity Projection
-The Euler attitude angles $(\phi, \theta, \psi)$ (Roll, Pitch, Yaw) integrate the angular rates:
-$$\phi_k = \phi_{k-1} + \omega_{x,k} \cdot \Delta t$$
-$$\theta_k = \theta_{k-1} + \omega_{y,k} \cdot \Delta t$$
-$$\psi_k = \psi_{k-1} + \omega_{z,k} \cdot \Delta t$$
+### `[SPEC-SITL-06]` Physics in the plugin
+* **Requirement**: The plugin holds the only SITL physics: a QuadX rigid body with gravity, motor thrust and torque from the DShot commands, drag, wind and ground contact. It keeps the true state (attitude, rates, position, velocity) so checks can compare INAV's estimate with it.
+* **Why**: one owner for the physics, next to the models and controls that use it.
+* **Verified by**: `sitl-mission-review`
+* **Not implemented yet**: the C++ physics in `src/target/sitl/hardware_simulator.hpp` is what runs today.
 
-Earth gravity ($1G$) is projected into the aircraft's tilted body frame to emulate 3-axis accelerometer outputs:
-$$A_x = -\sin(\theta)$$
-$$A_y = \sin(\phi) \cos(\theta)$$
-$$A_z = \cos(\phi) \cos(\theta) + A_{\text{thrust}}$$
+### `[SPEC-SITL-07]` Controls in Studio
+* **Requirement**: The plugin shows on-screen sticks and switches (roll, pitch, throttle, yaw, CH5 arm, CH6 mode) and also reads a USB joystick, so a transmitter in joystick mode can fly SITL, and can serve a touch-stick web page so a phone on the local network can fly it. Every source ends up as the same PWM decoder TLPs ([SPEC-SITL-05]). It offers, at any time: RC loss, GPS loss and fix quality, a stuck or failed sensor, sensor noise, a failed motor, and wind and gusts. It shows the motor outputs and the LED colours.
+* **Why**: failsafe and fault handling must be tried by hand, not only described.
+* **Verified by**: `sitl-mission-review`
+* **Not implemented yet**: `tools/studio_plugin/inav_plugin.py` is today an MSP client and display; it has a stick display but drives nothing.
 
-### D. Sensor TLP Stream Generation
-The physics engine packs these values into standard **InvenSense ICM-42688-P** 14-byte DMA telemetry packets ($2048\,\text{LSB}/g$ accelerometer sensitivity, $16.4\,\text{LSB}/(\text{deg}/\text{s})$ gyro sensitivity) and injects them into the coroutine telemetry ring buffer.
+### `[SPEC-SITL-08]` Scenario scripts
+* **Requirement**: A Python script can drive sticks and faults on simulated time and check results against the true state and INAV's MSP state. Scripts run without the GUI, so they can run in tests, and the same script gives the same result every run ([SPEC-SITL-04]).
+* **Why**: repeatable checks, not one-off manual flights.
+* **Verified by**: `sitl-mission-review`
+* **Not implemented yet**
 
----
+### `[SPEC-SITL-09]` INAV Configurator over TCP
+* **Requirement**: INAV Configurator connects to the SITL binary over TCP on port 5760 and every tab it opens works: the MSP commands it sends are answered from the flight code's real state, and it can enter CLI mode.
+* **Why**: setup and tuning use the standard tool.
+* **Verified by**: `sitl-mission-review`
+* **Not implemented yet**: the handshake and about 35 MSP v1 commands exist. The settings commands, INAV MSP2 commands and CLI mode (`#`) are not wired; the exact list comes from logging what the Configurator sends that goes unanswered.
 
-## 3. How to Build & Run the SITL Simulator
+### `[SPEC-SITL-10]` Later: HITL with the same plugin
+* **Requirement**: The same plugin and TLPs can drive the real board instead of the SITL binary, with models standing in for devices that are not connected.
+* **Why**: one set of models for SITL and HITL.
+* **Verified by**: `board-bringup`
+* **Not implemented yet**
 
-### Step 1: Compile the Simulator
-```bash
-cd /home/tcmichals/ssdData/projects/home/inav
-cmake -B build -DCMAKE_BUILD_TYPE=Debug
-cmake --build build -j$(nproc)
-```
+## 4. Order of work
 
-### Step 2: Launch the Simulator
-```bash
-./build/inav_abstractx_sitl
-```
-*Console Output:*
-```text
-SITL Flight Engine Running (Linux Desktop) — TCP 5760 — Press Ctrl+C to Stop.
-```
+1. These requirements.
+2. Put INAV on AbstractX's TLP format ([SPEC-SITL-02]).
+3. The link and lockstep ([SPEC-SITL-03], [SPEC-SITL-04]).
+4. One device at a time: IMU, compass, GPS, RC, DShot, LEDs ([SPEC-SITL-05]), fixing each driver problem as it shows, then physics, controls and scripts.
+5. AbstractX's runtime in place of INAV's coroutine engine.
+6. Configurator ([SPEC-SITL-09]).
 
----
+Problems found go in [`ENGINEERING_LOG.md`](ENGINEERING_LOG.md).
 
-## 4. Connecting INAV Configurator
+## 5. Open
 
-1. Open **INAV Configurator** (or Betaflight Configurator).
-2. Set connection mode to **TCP**.
-3. Enter Address: **`127.0.0.1`** (or `localhost`), Port: **`5760`**.
-4. Click **Connect**.
-5. **Real-Time Verification**:
-   * **Setup Tab**: View live 3D drone model orientation, arming flags, and virtual sensors.
-   * **PID Tuning**: Modify Feedforward, Anti-Gravity, and D-Min parameters.
-   * **CLI Tab**: Access the interactive configuration terminal (`help`, `status`, `diff`, `set`, `save`).
+* Link socket type and port.
+* Which register map governs device addresses: INAV's `include/pcie_bar_map.hpp` or AbstractX's.
+* What happens to `src/target/sitl/hardware_simulator.hpp` once the plugin has the physics.
+* GPS sentences and rate (GGA and RMC at 5 or 10 Hz proposed).
+* Idea, not a requirement yet: a flight trainer (phone sticks into Studio, beginner rates and angle mode, instructor takeover, lessons as scenario scripts, replay).
+* This file is not named `*SPECIFICATION.md`, so AbstractX's `spectrace_matrix.py --root inav` finds none of its requirements (0 found on 2026-11-07). Rename it, or move the requirements to a `SITL_SPECIFICATION.md`.
+* `sitl-mission-review` describes today's C++ test funnel; it needs a section that runs the plugin's scenario scripts.
 
----
+## 6. What exists today (before this plan)
 
-## 5. Automated Python SITL Test Harness (`tools/test_sitl_integration.py`)
-
-You can test the entire SITL simulator and MSP communication protocol programmatically using the automated Python integration harness:
-
-```bash
-# 1. Launch SITL in background
-./build/inav_abstractx_sitl &
-
-# 2. Run the automated Python test suite
-python3 tools/test_sitl_integration.py
-```
-
-*Console Output:*
-```text
-============================================================
- INAV-ABSTRACTX SITL PYTHON TEST HARNESS
-============================================================
-Connected to SITL Simulator on 127.0.0.1:5760
-
-[TEST 1/4] MSP_FC_VARIANT: 'INAV' ... PASSED!
-[TEST 2/4] MSP_API_VERSION: Proto=2, API=2.0 ... PASSED!
-[TEST 3/4] MSP_ATTITUDE: Roll=+0.0 deg, Pitch=+0.0 deg, Yaw=+0.0 deg ... PASSED!
-[TEST 4/4] MSP_RAW_GPS: Fix=1 (3D), Sats=12, Lat=37.774900, Lon=-22.419400, Alt=10m, HDOP=1.20 ... PASSED!
-
-============================================================
- ALL SITL PYTHON INTEGRATION TESTS PASSED 100%!
-============================================================
-```
-
----
-
-## 6. Live Blackbox Telemetry Capture & Replay
-
-While SITL is executing, stream real-time flight telemetry into an INAV Blackbox Explorer `.BBL` log file:
-
-```bash
-# Capture live UDP stream from SITL
-python3 tools/ctf_to_blackbox.py --live --port 19000 -o live_sitl_flight.bbl
-```
-
-Open `live_sitl_flight.bbl` in **INAV Blackbox Explorer** to analyze PID step responses, gyro noise spectrum, and motor mixer traces.
-
----
-
-## 7. External Simulator Coupling (Gazebo / FlightGear / RealFlight)
-
-To couple `inav-abstractx` with external 3D visual simulators:
-* **Actuator Output**: Read motor PWM values via the lock-free logging ring or UDP socket.
-* **Sensor Feedback**: Inject ground-truth state ($x, y, z, \dot{x}, \dot{y}, \dot{z}, \phi, \theta, \psi, p, q, r$) from Gazebo into `HardwareSimulator::step()`.
-
+* `src/target/sitl/sitl_main.cpp`: the SITL binary. Steps the C++ physics, pushes ICM-42688-P samples into a ring, runs EKF, navigation, PID and mixer, MSP on TCP 5760, blackbox to disk.
+* `src/target/sitl/hardware_simulator.hpp`: QuadX rate dynamics and an accelerometer gravity vector; no position, compass, GPS, RC or motor protocol.
+* `tools/studio_plugin/inav_plugin.py`: Studio plugin acting as an MSP client with flight deck, PID, receiver, motor, sensor, GPS and CLI tabs.
+* Build and run from the `flight` workspace: `cmake --workflow --preset sitl`, then `build/sitl/inav/inav_abstractx_sitl`.

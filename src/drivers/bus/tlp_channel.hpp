@@ -115,8 +115,9 @@ private:
 };
 
 inline void RegReadAwaiter::await_suspend(std::coroutine_handle<>) noexcept {
+    // @impl [SPEC-SITL-02] docs/SITL_SIMULATOR.md: length in 32-bit words.
     Tlp64 tlp = Tlp64::make_mem_read(bar_base | static_cast<uint32_t>(reg), tag);
-    tlp.wire.length = 1u;
+    tlp.wire.length_dw = 1u;
     (void)channel.send_request(tlp);
 }
 
@@ -132,20 +133,20 @@ inline std::optional<uint8_t> RegReadAwaiter::await_resume() noexcept {
 inline void RegWriteAwaiter::await_suspend(std::coroutine_handle<>) noexcept {
     Tlp64 tlp = Tlp64::make_mem_write(bar_base | static_cast<uint32_t>(reg), static_cast<uint32_t>(val), tag);
     tlp.wire.payload[0] = val;
-    tlp.wire.length = 1u;
+    tlp.wire.length_dw = 1u;
     success = channel.send_request(tlp);
 }
 
 inline void RegBurstReadAwaiter::await_suspend(std::coroutine_handle<>) noexcept {
     Tlp64 tlp = Tlp64::make_mem_read(bar_base | static_cast<uint32_t>(reg), tag);
-    tlp.wire.length = static_cast<uint16_t>(out_buffer.size());
+    tlp.wire.length_dw = static_cast<uint16_t>((out_buffer.size() + 3u) / 4u);
     (void)channel.send_request(tlp);
 }
 
 inline bool RegBurstReadAwaiter::await_resume() noexcept {
     while (auto opt_comp = channel.poll_completion()) {
         if (opt_comp->tag() == tag) {
-            const size_t copy_len = std::min(out_buffer.size(), static_cast<size_t>(opt_comp->wire.length));
+            const size_t copy_len = std::min(out_buffer.size(), opt_comp->length_bytes());
             for (size_t i = 0; i < copy_len; ++i) {
                 out_buffer[i] = opt_comp->wire.payload[i];
             }

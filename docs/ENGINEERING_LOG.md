@@ -572,3 +572,26 @@ This engineering log records design decisions, hardware trade-offs, architectura
 - **Verification Evidence**: from the `flight` workspace, `cmake --workflow --preset sitl`: exit 0, 5 of 5 ctest tests passed (`UnitTests`, `HardwareTest`, `SubmoduleDifferentialTest`, `SchedulerBenchmark`, `FullStackParityTest`); configure with `-DABSTRACTX_PATH=/nonexistent` stops with the error.
 - **Not Verified**: Pico build, hardware. This does not put INAV on the AbstractX runtime: it still does not link `abstractx_core` and still finds its own `include/asp_tlp64.hpp` first.
 
+
+---
+
+### [2026-11-07] SITL Plan: INAV's Own TLP Link, Device Models and Physics in the Studio Plugin
+- **Category**: `architecture`
+- **Decision** (owner): SITL is where INAV moves onto AbstractX's TLP API. The SITL binary keeps the flight code and drivers unchanged and adds only a TLP link. The device models (ICM-42688-P, QMC5883L, NMEA GPS, PWM decoder RC, DShot600, NeoPixel; no barometer), the physics, the controls (on-screen sticks, USB joystick, phone) and scenario scripts live in INAV's Studio plugin. SITL uses AbstractX's TLP format, not AbstractX's simulation. Requirements: `docs/SITL_SIMULATOR.md` [SPEC-SITL-01] to [SPEC-SITL-10].
+- **Problems found while planning** (code read, nothing run): INAV's `include/asp_tlp64.hpp` differs from AbstractX's (44-byte payload, no CRC, field order); `make_mem_write` uses channel `0x03`, AbstractX's flight log stream; `TlpType::Completion` is `0x04`, AbstractX's completion with data is `0x03`; `PwmRc::parse_tlp` and `RcDriver::parse_pwm_tlp` read pulse widths in opposite byte order; `PwmRc` detects RC loss from throttle below 900 µs, not from missing frames.
+- **Conflict to resolve**: `CLAUDE.md` §2 says platform pieces such as transports belong in AbstractX; the owner decided the SITL link and models belong here.
+- **Files Modified**: `docs/SITL_SIMULATOR.md` (rewritten as requirements), `docs/ENGINEERING_LOG.md`.
+- **Verification Evidence**: none; documentation only.
+- **Not Verified**: nothing built or run.
+
+---
+
+### [2026-11-07] INAV Uses AbstractX's TLP Header, Length Unit and Register Map
+- **Category**: `product-bug` / `architecture`
+- **Problem**: `include/asp_tlp64.hpp` and `include/pcie_bar_map.hpp` were INAV's own copies and were found before AbstractX's. A new test, `test/test_tlp_wire_format.cpp` (`TlpWireFormatTest`), checks the `Tlp64` INAV compiles against field by field against AbstractX's C struct `asp_tlp64_t`. On the old header it reported 9 failures: `flags`, `channel`, `target_address`, `length` and `sequence` at the wrong offsets, a 44-byte payload instead of 40, `make_mem_write` on channel `0x03` and `make_mem_read` on `0x02` instead of `0x01` (Control), and `TlpType::Completion` `0x04` instead of `0x03`.
+- **Decisions** (owner): follow AbstractX. (1) Delete INAV's `asp_tlp64.hpp`; everything compiled unchanged. (2) `length` is AbstractX's `length_dw`, 32-bit words: INAV wrote byte counts in `TlpChannel` (burst reads), `PcieTlpScheduler` (completions) and `AutoDmaManager::ingest_burst`; the test's length cases failed 3 times (14-byte read sent 14, not 4; completion said 40 bytes, not 16; auto-DMA burst 14, not 4) and pass after the change. (3) Delete INAV's `pcie_bar_map.hpp`; AbstractX's is used (Baro `0x3000`, Mag `0x4000`, ESC `0x2000`, `0x5000` Serial/GPS). INAV used only names, never raw addresses, so nothing else changed. A generated map can replace it later. (4) No CRC in INAV: the TLP's last 4 bytes are the transport's (AbstractX uses them on serial links only).
+- **Bug shown by the new layout**: `PcieTlpScheduler::dispatch_request` clamped reads to 44 bytes, so a long read wrote past the 40-byte payload into the TLP's last 4 bytes. The test's long-read case failed (`0xAAAAAAAA` there) and passes after clamping to the payload.
+- **Test bug**: the first `CHECK_EQ` evaluated its argument twice, so `await_resume()` ran twice and reported a false failure; it now evaluates each argument once.
+- **Files Modified**: `include/asp_tlp64.hpp` and `include/pcie_bar_map.hpp` (deleted), `src/drivers/bus/tlp_channel.hpp`, `src/target/common/pcie_tlp_scheduler.hpp`, `src/target/common/auto_dma_manager.hpp`, `test/test_tlp_wire_format.cpp` (new), `CMakeLists.txt`, `docs/SITL_SIMULATOR.md` ([SPEC-SITL-02], [SPEC-SITL-03]), `docs/ENGINEERING_LOG.md`.
+- **Verification Evidence**: from the `flight` workspace, `cmake --build build/sitl`, then `ctest --test-dir build/sitl`: 6 of 6 passed (`UnitTests`, `HardwareTest`, `SubmoduleDifferentialTest`, `SchedulerBenchmark`, `FullStackParityTest`, `TlpWireFormatTest`), `TlpWireFormatTest` 0 failures. ASan/UBSan build (`build/sitl-asan`, `-fsanitize=address,undefined -fno-sanitize-recover=all`): 6 of 6 passed, no sanitizer report. SITL ran 5 s and stopped cleanly, 310 TLPs logged, as before.
+- **Not Verified**: Pico build, TSan, the Configurator, hardware. INAV still has its own coroutine engine and `spsc_tlp_ring.hpp`, and does not link `abstractx_core`.

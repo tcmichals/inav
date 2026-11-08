@@ -156,11 +156,12 @@ public:
         }
 
         auto& ch = channels_[idx];
-        const size_t copy_len = std::min(payload.size(), static_cast<size_t>(40ul));
+        // @impl [SPEC-SITL-02] docs/SITL_SIMULATOR.md: length in 32-bit words.
+        const size_t copy_len = std::min(payload.size(), static_cast<size_t>(ASP_TLP64_PAYLOAD_SIZE));
 
         Tlp64 tlp = Tlp64::make_mem_write(ch.bar_address, 0u, ch.seq_tag++);
         tlp.wire.timestamp_ns = timestamp_ns;
-        tlp.wire.length = static_cast<uint16_t>(copy_len);
+        tlp.wire.length_dw = static_cast<uint16_t>((copy_len + 3u) / 4u);
 
         for (size_t i = 0; i < copy_len; ++i) {
             tlp.wire.payload[i] = payload[i];

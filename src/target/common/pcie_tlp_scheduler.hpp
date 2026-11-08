@@ -112,16 +112,17 @@ private:
             if (bar_idx < NUM_BARS) {
                 mock_regs_[bar_idx][reg] = req.wire.payload[0];
             }
-            comp.wire.length = 0u;
+            comp.wire.length_dw = 0u;
             (void)inbound_.push(comp);
         } else if (req.type() == static_cast<uint8_t>(TlpType::MemRead)) {
             // Read from mock register / physical peripheral
             if (bar_idx < NUM_BARS) {
-                const size_t read_len = std::min(static_cast<size_t>(req.wire.length), 44ul);
+                // @impl [SPEC-SITL-02] docs/SITL_SIMULATOR.md: length in 32-bit words, never past the payload.
+                const size_t read_len = req.length_bytes();
                 for (size_t i = 0; i < read_len; ++i) {
                     comp.wire.payload[i] = mock_regs_[bar_idx][(reg + i) & 0xFFu];
                 }
-                comp.wire.length = static_cast<uint16_t>(read_len);
+                comp.wire.length_dw = static_cast<uint16_t>((read_len + 3u) / 4u);
             }
             (void)inbound_.push(comp);
         }

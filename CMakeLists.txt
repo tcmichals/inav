@@ -235,6 +235,10 @@ else()
     add_test(NAME SubmoduleDifferentialTest COMMAND submodule_differential_test)
     add_test(NAME SchedulerBenchmark COMMAND scheduler_benchmark)
     add_test(NAME FullStackParityTest COMMAND full_stack_parity_test)
+
+    # @impl [SPEC-SITL-02] docs/SITL_SIMULATOR.md: INAV's TLPs match AbstractX's wire format.
+    add_executable(tlp_wire_format_test test/test_tlp_wire_format.cpp)
+    add_test(NAME TlpWireFormatTest COMMAND tlp_wire_format_test)
 endif()
 
 
