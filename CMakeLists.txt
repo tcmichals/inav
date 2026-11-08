@@ -28,6 +28,9 @@ else()
     else()
         add_compile_options(-Wall -Wextra -Wpedantic -Wconversion -Werror=vla)
     endif()
+    # No exceptions and no RTTI on every target, so SITL and the tests compile only what the
+    # firmware can run (the Pico SDK and AbstractX's bare-metal targets build this way).
+    add_compile_options($<$<COMPILE_LANGUAGE:CXX>:-fno-exceptions> $<$<COMPILE_LANGUAGE:CXX>:-fno-rtti>)
     add_compile_options($<$<CONFIG:Debug>:-g3> $<$<CONFIG:Debug>:-O0> $<$<CONFIG:Debug>:-DDEBUG>)
     add_compile_options($<$<CONFIG:Release>:-O3> $<$<CONFIG:Release>:-DNDEBUG>)
 endif()
