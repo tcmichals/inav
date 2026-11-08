@@ -131,6 +131,14 @@ if(PICO_BOARD OR BUILD_PICO2)
 # Target Definitions: Host Linux / SITL / SBC / Test Targets
 # ==============================================================================
 else()
+    # AbstractX runtime and bus (asp_coro, CoroutineIoEngine, init/spawn/run) and the Linux target
+    # (timer, IIoProcessor). INAV keeps no copy of them. The flight workspace adds AbstractX itself.
+    if(NOT TARGET abstractx_core)
+        set(ABSTRACTX_TARGET "host" CACHE STRING "AbstractX target")
+        add_subdirectory(${ABSTRACTX_PATH} ${CMAKE_BINARY_DIR}/abstractx EXCLUDE_FROM_ALL)
+    endif()
+    link_libraries(abstractx_core abstractx_target_linux abstractx_host_posix)
+
     # Check for Boost (optional; native POSIX networking used by default)
     find_package(Boost 1.74 QUIET COMPONENTS system)
     if(Boost_FOUND)
