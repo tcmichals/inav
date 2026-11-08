@@ -9,7 +9,7 @@
 #define CTF_STREAM_SERVER_HPP
 
 #include "asp_tlp64.hpp"
-#include "spsc_tlp_ring.hpp"
+#include "tlp_ring.hpp"
 #include <cstdint>
 #include <array>
 #include <string_view>

@@ -18,7 +18,7 @@
 #define TLP_CHANNEL_HPP
 
 #include "asp_tlp64.hpp"
-#include "spsc_tlp_ring.hpp"
+#include "tlp_ring.hpp"
 #include "coroutine_task.hpp"
 #include <cstdint>
 #include <span>

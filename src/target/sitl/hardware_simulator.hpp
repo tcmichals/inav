@@ -10,7 +10,7 @@
 
 #include "asp_tlp64.hpp"
 #include "pcie_bar_map.hpp"
-#include "spsc_tlp_ring.hpp"
+#include "tlp_ring.hpp"
 #include "blackbox_logger.hpp"
 #include <cstdint>
 #include <cmath>

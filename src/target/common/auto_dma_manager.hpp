@@ -16,7 +16,7 @@
 
 #include "asp_tlp64.hpp"
 #include "pcie_bar_map.hpp"
-#include "spsc_tlp_ring.hpp"
+#include "tlp_ring.hpp"
 #include "imu_base.hpp"
 #include "abstractx/hal/io_processor.hpp"
 #include <cstdint>

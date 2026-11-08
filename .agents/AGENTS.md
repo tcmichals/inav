@@ -8,7 +8,7 @@
 5. **Git Commit Freeze**: **Do NOT execute `git commit` or `git push`** until explicitly instructed by the user. Keep all work live in the local working tree.
 6. **Mandatory Engineering Log Updates**: All architectural decisions, bug fixes, upstream parity ports, and hardware platform changes MUST be logged in [`docs/ENGINEERING_LOG.md`](../docs/ENGINEERING_LOG.md) following the standardized chronicle format defined in [`.agents/skills/engineering-log/SKILL.md`](skills/engineering-log/SKILL.md).
 7. **Single TODO.md Master Roadmap Mandate**: Maintain strictly ONE authoritative `TODO.md` in the project root (`TODO.md`). Never create fragmented, secondary, or per-feature todo documents (e.g. `todo.txt`, `TODO_PHASE2.md`). All milestones, active hardware integration tasks, multi-repo links, and roadmap items MUST reside exclusively within `TODO.md`.
-8. **Strict AbstractX Isolation Mandate (Zero Unapproved AbstractX Git Actions)**: Never execute git commits, pushes, or code modifications inside `AbstractX` (`external/AbstractX` or `/home/tcmichals/projects/AbstractX`) unless explicitly requested and authorized by the user. All commits and working tree operations MUST be strictly scoped to `tcmichals/inav`.
+8. **Strict AbstractX Isolation Mandate (Zero Unapproved AbstractX Git Actions)**: Never execute git commits, pushes, or code modifications inside `AbstractX` (the `tcmichals/flight` workspace copy or any other checkout) unless explicitly requested and authorized by the user. All commits and working tree operations MUST be strictly scoped to `tcmichals/inav`.
 
 ## Algorithmic Fidelity & Porting Rules
 1. **Master Porting Plan**: Always reference, update, and follow the master checklist in [`docs/INAV_PORTING_MASTER_PLAN.md`](../docs/INAV_PORTING_MASTER_PLAN.md).
@@ -53,7 +53,7 @@
      * **Array of Dedicated Channels**: Name as `TlpChannelMultiplexer` or `SpscChannelArray<N>` where each producer has a private index `[0..N-1]` drained round-robin by the consumer with zero contention.
 6. **AbstractX Single-Source-of-Truth Mandate (Zero Code Duplication)**:
    - Never duplicate platform abstractions, reactor event loops, hardware abstraction layers (HAL), inter-core bridges, socket transports, or low-level peripheral drivers inside `tcmichals/inav`.
-   - All such platform primitives belong exclusively in `AbstractX` (`external/AbstractX`).
+   - All such platform primitives belong exclusively in `AbstractX` (provided by the `tcmichals/flight` workspace; no copy or submodule here).
    - If an architectural component, transport awaiter, bridge protocol, or driver capability is needed by INAV, it must be implemented or extended directly in `AbstractX` and consumed by INAV via header/library inclusion. INAV's scope is strictly flight control dynamics, navigation state machines, filtering mathematics, failsafe, and avionics safety.
 
 

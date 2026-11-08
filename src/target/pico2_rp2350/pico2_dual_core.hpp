@@ -26,7 +26,7 @@
 #ifndef PICO2_DUAL_CORE_HPP
 #define PICO2_DUAL_CORE_HPP
 
-#include "spsc_tlp_ring.hpp"
+#include "tlp_ring.hpp"
 #include "asp_tlp64.hpp"
 #include <cstdint>
 #include <string_view>

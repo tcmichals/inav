@@ -40,7 +40,7 @@ This document defines repository standards, architecture, commands, and rules fo
   - Multi-producer contexts MUST be explicitly named and implemented as `MpscEventQueue` (`MpscTlpRing`) or `SpscChannelArray` (dedicated per-producer SPSC channels).
 - **AbstractX Single-Source-of-Truth Mandate (Zero Code Duplication)**:
   - Never duplicate platform abstractions, reactor event loops, hardware abstraction layers (HAL), inter-core bridges, socket transports, or low-level peripheral drivers inside `tcmichals/inav`.
-  - All such platform primitives belong exclusively in `AbstractX` (`external/AbstractX`).
+  - All such platform primitives belong exclusively in `AbstractX` (provided by the `tcmichals/flight` workspace; no copy or submodule here).
   - If an architectural component, transport awaiter, bridge protocol, or driver capability is needed by INAV, it must be implemented or extended directly in `AbstractX` and consumed by INAV via header/library inclusion. INAV's scope is strictly flight control dynamics, navigation state machines, filtering mathematics, failsafe, and avionics safety.
 - **Top Half (C++20 Stackless Coroutines)**:
   - Flight engine, sensors, and telemetry are non-blocking coroutines yielding via `co_await sleep_ms()` or `co_await tlp_channel.async_transaction()`.
@@ -65,10 +65,11 @@ The project merges **INAV 3D Navigation & State Estimation** with **Betaflight A
 ## 4. Build & Test Commands
 
 ```bash
-# Configure and compile host Linux / SITL / Unit Test suite
-mkdir -p build && cd build
-cmake ..
-make -j$(nproc)
+# From the tcmichals/flight workspace root (passes AbstractX in, builds and runs the tests)
+cmake --workflow --preset sitl
+
+# Or from this directory inside the workspace
+cmake -B build -DABSTRACTX_PATH=../AbstractX && cmake --build build -j
 
 # Run Submodule Differential Parity Tests (100% bit-exact against C sources)
 ./submodule_differential_test
@@ -95,7 +96,6 @@ Before declaring any feature or port complete, execute the 4-tier verification f
 
 For RP2350 Pico 2 bare-metal builds:
 ```bash
-mkdir -p build_pico2w && cd build_pico2w
-cmake -DPICO_BOARD=pico2_w -DBUILD_PICO2=ON ..
-make -j$(nproc) inav_abstractx_pico2w
+cmake -B build_pico2w -DPICO_BOARD=pico2_w -DBUILD_PICO2=ON -DABSTRACTX_PATH=../AbstractX
+cmake --build build_pico2w -j --target inav_abstractx_pico2w
 ```

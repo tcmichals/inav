@@ -35,7 +35,7 @@
 #include "asp_tlp64.hpp"
 #include "pcie_bar_map.hpp"
 #include "coroutine_task.hpp"
-#include "spsc_tlp_ring.hpp"
+#include "tlp_ring.hpp"
 #include <cstdint>
 #include <cmath>
 #include <span>

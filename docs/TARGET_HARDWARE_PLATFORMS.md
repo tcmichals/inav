@@ -89,7 +89,7 @@ if (!res.has_value()) {
 - **Triple-PIO Hardware Offloading**:
   - **PIO0 (DShot150..1200)**: Autonomous motor pulse train synthesis without CPU intervention.
   - **PIO1 (CRSF RC RX)**: Half-duplex bidirectional CRSF telemetry decoding with DMA circular buffer.
-  - **PIO2 (Auto-SPI IMU Burst)**: Autonomous periodic 14-byte IMU burst read triggered directly by DRDY interrupt line into `spsc_tlp_ring`.
+  - **PIO2 (Auto-SPI IMU Burst)**: Autonomous periodic 14-byte IMU burst read triggered directly by DRDY interrupt line into `tlp_ring`.
 - **Zero Polling Loops**: Drivers suspend via C++20 `co_await tlp_channel.async_transaction()` or `co_await sleep_ms()`.
 
 ---

@@ -203,6 +203,6 @@ Consolidate INAV Configurator, Betaflight Configurator, `python-imgui-esc-config
 
 ## 6. Submodule & Maintenance Tasks
 
-- [ ] **Submodule Reference Update**: When the partner AbstractX session completes queue naming updates, update the commit reference in `external/AbstractX`.
+- [x] **No AbstractX submodule** (2026-11-07): AbstractX comes from the `tcmichals/flight` workspace, which pins the tested commits.
 - [ ] **Git Commit Freeze Policy**: Maintain all working tree modifications live without executing `git commit` or `git push` until explicitly authorized by user.
 - [ ] **Mandatory Engineering Log Updates**: Keep [`docs/ENGINEERING_LOG.md`](file:///home/tcmichals/projects/quadcopter/inav/docs/ENGINEERING_LOG.md) synchronized after every hardware milestone and architectural decision.

@@ -32,11 +32,11 @@ else()
     add_compile_options($<$<CONFIG:Release>:-O3> $<$<CONFIG:Release>:-DNDEBUG>)
 endif()
 
-# AbstractX location: passed in by the workspace, otherwise this repo's submodule. Never guessed from
-# where the checkout sits, so every build of one checkout uses the same AbstractX.
-set(ABSTRACTX_PATH "${CMAKE_CURRENT_SOURCE_DIR}/external/AbstractX" CACHE PATH "Path to AbstractX repository")
+# AbstractX location: always passed in (the tcmichals/flight workspace does). INAV keeps no copy of
+# AbstractX and never guesses where one is.
+set(ABSTRACTX_PATH "" CACHE PATH "Path to AbstractX repository")
 if(NOT EXISTS "${ABSTRACTX_PATH}/include/asp_tlp64.hpp")
-    message(FATAL_ERROR "AbstractX headers not found at ${ABSTRACTX_PATH}. Pass -DABSTRACTX_PATH= or initialize external/AbstractX.")
+    message(FATAL_ERROR "AbstractX headers not found at '${ABSTRACTX_PATH}'. Build from the tcmichals/flight workspace, or pass -DABSTRACTX_PATH=.")
 endif()
 message(STATUS "Using AbstractX at: ${ABSTRACTX_PATH}")
 
@@ -69,7 +69,6 @@ include_directories(
     "${CMAKE_CURRENT_SOURCE_DIR}/src/target/linux_common"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/target/sitl"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/target/pico2_rp2350"
-    "${CMAKE_CURRENT_SOURCE_DIR}/include"
     "${ABSTRACTX_PATH}/include"
     "${ABSTRACTX_PATH}/targets/linux/include"
     "${ABSTRACTX_PATH}/third_party/etl/include"

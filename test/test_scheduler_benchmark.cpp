@@ -33,7 +33,7 @@
 #include "mixer.hpp"
 #include "scheduler.hpp"
 #include "coroutine_task.hpp"
-#include "spsc_tlp_ring.hpp"
+#include "tlp_ring.hpp"
 
 using namespace abstractx;
 

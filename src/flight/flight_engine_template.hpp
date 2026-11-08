@@ -12,7 +12,7 @@
 #define FLIGHT_ENGINE_TEMPLATE_HPP
 
 #include "coroutine_task.hpp"
-#include "spsc_tlp_ring.hpp"
+#include "tlp_ring.hpp"
 #include "pcie_bar_map.hpp"
 #include "imu_pcie_driver.hpp"
 #include "baro_driver.hpp"

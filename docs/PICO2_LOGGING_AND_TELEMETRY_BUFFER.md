@@ -5,7 +5,7 @@
 > **Primary Source References**:  
 > - [`src/target/pico2_rp2350/pico2_main.cpp`](../src/target/pico2_rp2350/pico2_main.cpp)  
 > - [`src/target/pico2_rp2350/lwip_msp_transport.hpp`](../src/target/pico2_rp2350/lwip_msp_transport.hpp)  
-> - [`include/spsc_tlp_ring.hpp`](../include/spsc_tlp_ring.hpp)  
+> - AbstractX `include/tlp_ring.hpp`  
 > - [`include/asp_tlp64.hpp`](../include/asp_tlp64.hpp)  
 
 ---

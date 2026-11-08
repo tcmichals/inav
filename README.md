@@ -114,19 +114,9 @@ $$\text{Concurrent Startup (`when_all`):} \quad T_{\text{boot}} = \max_{i=1}^N(T
 
 ---
 
-### 3.3 Unified 64-Byte (512-bit) TLP Standard & QMTECH Zynq-7020 BRAM Architecture
+### 3.3 TLP Bus
 
-The Transaction Layer Packet (`Tlp64`) abstraction decouples high-level flight dynamics from physical bus hardware (SPI, I2C, UART, PIO, PCIe, AXI DMA). Rather than maintaining fragmented variable-length packet formats across targets, AbstractX enforces a **strictly unified 64-byte (512-bit) wire format** everywhere:
-
-#### Unified 64-Byte Wire Protocol (`asp_tlp64.hpp`)
-* **Exact Cache-Line Fit**: 64 bytes aligns perfectly with the ARM Cortex-A55 (Cubie A5E) and Cortex-A9 (Zynq-7000) L1/L2 cache-line width, enabling single-burst 64-byte memory copies (~80 ns) with zero unaligned shifts.
-* **Deterministic RPMsg Packing**: 512-byte VirtIO RPMsg buffers hold exactly eight 64-byte TLPs with zero ring fragmentation or buffer waste.
-* **Hardware Interoperability**: Software, microcontrollers, and FPGA switch fabrics share the exact same binary struct layout (`sizeof(asp_tlp64_t) == 64`) with zero serialization or translation penalty.
-
-#### QMTECH Zynq-7020 & Tang Nano 20K FPGA Offload Profiles
-The FPGA offload engine operates under two hardware profiles using the same unified 64-byte TLP format:
-* **QMTECH Zynq-7020 (XC7Z020)**: Implements dual 8 KiB PL BRAM FIFOs (`asp_axi_lite_bridge.sv`) mapped into PS address space at `0x4000_0000` via `M_AXI_GP0` and `/dev/uio0` with `IRQ_F2P[0]`. `asp_router.sv` switches 64-byte packets in a single cycle between BRAM, autonomous 8 kHz IMU SPI master, 4-ch DShot300/600, and nanosecond timer.
-* **Sipeed Tang Nano 20K / Primer 20K (GW2AR-LV18)**: External companion FPGA paired with Radxa Cubie A5E via 5-wire Dual-SPI (`/dev/spidev` + `INT_REQ` GPIO edge interrupt). Runs `asp_top.sv` (22% LUT4, 121.85 MHz routed Fmax) with 64-byte TLPs and hardware CRC32 validation.
+INAV uses AbstractX's 64-byte TLP format and register map and keeps no copy of either: `AbstractX/docs/tier2_contracts/TLP_BUS_SPECIFICATION.md`, `AbstractX/include/asp_tlp64.hpp`, `AbstractX/include/pcie_bar_map.hpp`. FPGA blocks and their profiles are documented in `abstractx-fpga`.
 
 ---
 
@@ -176,10 +166,8 @@ concept AutoDmaCapableImu = requires(std::span<const uint8_t> raw, uint64_t ts, 
 - **InvenSense MPU-6000** ([`src/drivers/imu/mpu6000.hpp`](file:///home/tcmichals/projects/quadcopter/inav/src/drivers/imu/mpu6000.hpp)): Burst starting at register `0x3B` (`REG_ACCEL_XOUT_H`), length 14 bytes (`Accel[0..5]`, `Temp[6..7]`, `Gyro[8..13]`), positive rising edge, 20 MHz SPI.
 - **Bosch BMI088** ([`src/drivers/imu/bmi088.hpp`](file:///home/tcmichals/projects/quadcopter/inav/src/drivers/imu/bmi088.hpp)): Gyro burst starting at register `0x02` (`REG_RATE_X_LSB`), length 6 bytes (Little-Endian `Gyro X, Y, Z`), positive rising edge, 10 MHz SPI.
 
-#### Protocol Wire Format (`ASP_TLP_TYPE_DMA_STREAM` 0x10)
-- **Setup Packet (`ASP_TLP_TYPE_DMA_CFG` 0x11, Command `0x01`)**: Configures trigger pin, edge sensitivity, SPI bus ID, burst read register command (`0x80 | reg`), and egress telemetry channel (`0x02`).
-- **Control Packet (`ASP_TLP_TYPE_DMA_CFG` 0x11, Command `0x02` / `0x03`)**: Dynamically arms or disarms hardware streaming, locking/unlocking the physical bus for manual configuration access.
-- **Stream Packet (`ASP_TLP_TYPE_DMA_STREAM` 0x10)**: Carries up to 40 bytes of raw sensor payload, 64-bit nanosecond hardware capture timestamp, correlation tag (`Tag 1` for IMU, `Tag 2` for GPS, `Tag 3` for Mag, `Tag 4` for Baro, `Tag 5` for Pitot), and sequential packet counter.
+#### Packets
+Setup, control and stream packets (`ASP_TLP_TYPE_DMA_CFG`, `ASP_TLP_TYPE_DMA_STREAM`) are AbstractX's, defined in `AbstractX/docs/tier2_contracts/TLP_BUS_SPECIFICATION.md`. INAV's own convention is the stream tag: 1 IMU, 2 GPS, 3 Mag, 4 Baro, 5 Pitot.
 
 ---
 
@@ -250,7 +238,7 @@ The validation pipeline verifies numerical accuracy, timing constraints, and sys
 
 ```bash
 # 1. Configure and build all host targets (SITL, test suites, benchmarks, SBC binary)
-cmake -B build -DCMAKE_BUILD_TYPE=Release
+cmake -B build -DCMAKE_BUILD_TYPE=Release -DABSTRACTX_PATH=../AbstractX
 cmake --build build -j$(nproc)
 
 # 2. Run automated validation pipeline
@@ -273,7 +261,7 @@ python3 tools/run_all_validations.py
 
 ```bash
 # Configure and build Pico 2 W firmware (.uf2 / .elf)
-cmake -B build_pico2w -DPICO_BOARD=pico2_w -DCMAKE_BUILD_TYPE=Release
+cmake -B build_pico2w -DPICO_BOARD=pico2_w -DCMAKE_BUILD_TYPE=Release -DABSTRACTX_PATH=../AbstractX
 cmake --build build_pico2w -j$(nproc)
 ```
 
@@ -281,7 +269,7 @@ cmake --build build_pico2w -j$(nproc)
 
 ```bash
 # Configure and build ESP32-P4 firmware via ESP-IDF / CMake
-cmake -B build_esp32p4 -DESP_PLATFORM=1 -DIDF_TARGET=esp32p4 -DCMAKE_BUILD_TYPE=Release
+cmake -B build_esp32p4 -DESP_PLATFORM=1 -DIDF_TARGET=esp32p4 -DCMAKE_BUILD_TYPE=Release -DABSTRACTX_PATH=../AbstractX
 cmake --build build_esp32p4 -j$(nproc)
 ```
 

@@ -17,7 +17,7 @@ The Raspberry Pi RP2350 incorporates dual ARM Cortex-M33 cores (or dual Hazard3 
 | - Hardware Status & Arming Logic         | - Multi-Airframe Motor/Servo Mixer             |
 +──────────────────────────────────────────┴────────────────────────────────────────────────+
                                            │
-                        Lock-Free SPSC Ring Buffers (spsc_tlp_ring.hpp)
+                        Lock-Free SPSC Ring Buffers (AbstractX tlp_ring.hpp)
                                            │
                                            ▼
 +───────────────────────────────────────────────────────────────────────────────────────────+

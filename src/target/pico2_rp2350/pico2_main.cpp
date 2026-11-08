@@ -26,7 +26,7 @@
 
 #include "coroutine_task.hpp"
 #include "asp_tlp64.hpp"
-#include "spsc_tlp_ring.hpp"
+#include "tlp_ring.hpp"
 #include "config_registry.hpp"
 #include "bus_concepts.hpp"
 #include "pico2_target.hpp"

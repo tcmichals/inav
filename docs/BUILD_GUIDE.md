@@ -20,7 +20,7 @@
 cd /home/tcmichals/ssdData/projects/home/inav
 
 # 1. Configure CMake with Pico 2 W target (FetchContent handles SDK offline):
-cmake -B build_pico2w -DPICO_BOARD=pico2_w -DCMAKE_BUILD_TYPE=Release
+cmake -B build_pico2w -DPICO_BOARD=pico2_w -DCMAKE_BUILD_TYPE=Release -DABSTRACTX_PATH=../AbstractX
 
 # 2. Compile UF2 binary:
 cmake --build build_pico2w -j$(nproc)
@@ -57,7 +57,7 @@ sudo apt install -y build-essential cmake libboost-all-dev libcpputest-dev gdb p
 cd /home/tcmichals/ssdData/projects/home/inav
 
 # 1. Configure CMake Debug build:
-cmake -B build -DCMAKE_BUILD_TYPE=Debug
+cmake -B build -DCMAKE_BUILD_TYPE=Debug -DABSTRACTX_PATH=../AbstractX
 
 # 2. Build SITL executable and unit tests:
 cmake --build build -j$(nproc)
@@ -109,7 +109,7 @@ To ensure zero latency spikes in the 16 kHz flight loop:
 cd /home/tcmichals/ssdData/projects/home/inav
 
 # 1. Configure CMake Release build for Linux SBC:
-cmake -B build_sbc -DCMAKE_BUILD_TYPE=Release
+cmake -B build_sbc -DCMAKE_BUILD_TYPE=Release -DABSTRACTX_PATH=../AbstractX
 
 # 2. Build Linux SBC executable:
 cmake --build build_sbc --target inav_linux_sbc -j$(nproc)

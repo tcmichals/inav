@@ -16,7 +16,7 @@
 +───────────────────────────────────────────────────────────────────────────────────────────+
                                               │
                          64-Byte TLP Virtual Bus / SPSC Rings
-                          (asp_tlp64.hpp / spsc_tlp_ring.hpp)
+                          (AbstractX asp_tlp64.hpp / tlp_ring.hpp)
                                               │
                                               ▼
 +───────────────────────────────────────────────────────────────────────────────────────────+
@@ -36,29 +36,14 @@
 
 ---
 
-## 2. AbstractX TLP Virtual Bus: Unified 64-Byte (512-bit) TLP Standard
+## 2. AbstractX TLP Virtual Bus
 
-> [!IMPORTANT]
-> **DESIGN RULE: UNIFIED 64-BYTE (512-BIT) TLP STANDARD**
-> * **Unified Datagram Across Domains**: Software (Linux SBC, microcontrollers) and hardware (FPGA PL, PCIe endpoints) standardize strictly on the unified 64-byte (512-bit) `asp_tlp64_t` packet format.
-> * **Hardware-Native Efficiency**: Exactly fits ARM Cortex-A55 and Cortex-A9 64-byte cache lines (~80 ns copy), packs exactly eight frames per 512-byte VirtIO RPMsg buffer with zero fragmentation, and maps directly into QMTECH Zynq-7020 dual 8 KiB PL BRAM FIFOs (`asp_axi_lite_bridge.sv` via `M_AXI_GP0` / `/dev/uio0`).
+INAV uses AbstractX's 64-byte TLP bus and keeps no copy of its definitions. The TLP layout, type and channel values, the `length_dw` unit and the device register map are defined only in AbstractX:
 
-### Memory & Header Layout:
-```
-Byte 0..3:   Header (Type, Length, Device ID, Target BAR)
-Byte 4..11:  64-bit Hardware Nanosecond Timestamp (timestamp_ns)
-Byte 12..15: Address Offset / Register Base
-Byte 16..63: Payload Data (Sensor samples, actuator setpoints, configuration, or telemetry)
-```
+* Format: `AbstractX/docs/tier2_contracts/TLP_BUS_SPECIFICATION.md`, `AbstractX/include/asp_tlp64.hpp`
+* Register map: `AbstractX/include/pcie_bar_map.hpp`
 
-### Virtual Base Address Register (BAR) Map:
-* `PCIE_BAR_IMU_BASE` (`0x0000_1000`): Accelerometer and Gyroscope sample streams (32 Bytes).
-* `PCIE_BAR_BARO_BASE` (`0x0000_2000`): Barometer pressure and temperature registers (16 Bytes).
-* `PCIE_BAR_MAG_BASE` (`0x0000_3000`): 3-Axis Magnetometer magnetic field vectors (24 Bytes).
-* `PCIE_BAR_GPS_BASE` (`0x0000_4000`): UBX / NMEA GPS binary packet buffers (44 Bytes).
-* `PCIE_BAR_RC_BASE` (`0x0000_5000`): RC channel words (CRSF, SBUS, Spektrum, PWM) (40 Bytes).
-* `PCIE_BAR_ESC_BASE` (`0x0000_6000`): DShot / PWM motor setpoint output channels (16 Bytes).
-* `PCIE_BAR_TELEMETRY_BASE` (`0x0000_7000`): High-speed BareCTF trace stream ring (64 Bytes).
+INAV never handles the TLP's CRC; that belongs to the transport. `test/test_tlp_wire_format.cpp` checks that INAV builds against AbstractX's definitions.
 
 ---
 
@@ -102,14 +87,9 @@ The system enforces a strict architectural boundary between **Top-Level Flight C
 
 ---
 
-## 4. Lock-Free Single-Producer Single-Consumer (SPSC) Ring
+## 4. TLP Rings
 
-Inter-thread and inter-core communication utilizes lock-free, cache-aligned SPSC rings ([`spsc_tlp_ring.hpp`](file:///home/tcmichals/ssdData/projects/home/AbstractX/include/spsc_tlp_ring.hpp)):
-
-* **Zero Mutex Locking**: Uses `std::atomic<size_t>` head and tail pointers with acquire-release memory ordering (`std::memory_order_acquire`, `std::memory_order_release`).
-* **Cache-Line Padding**: Head and tail indices are isolated on separate 64-byte cache lines to eliminate CPU cache false sharing.
-* **Power-of-Two Masking**: Index wrapping is performed via bitwise AND (`index & (Capacity - 1)`), eliminating hardware division overhead.
-* **Memory Footprint**: `SpscTlpRing<64>` allocates `64 * 64 = 4,096` bytes statically.
+The rings between INAV and the transport are AbstractX's `SpscTlpRing` (`AbstractX/include/tlp_ring.hpp`).
 
 ---
 
@@ -331,7 +311,7 @@ In legacy INAV, all sensor transactions are serialized over a single thread: `TA
 
 With **AbstractX Parallel I/O and Auto-DMA**:
 1. **Autonomous DRDY Hardware DMA**:
-   - **On RP2350 Pico 2 W**: PIO2 state machine (`PioImuReader` / `asp_pio_tlp_shim.sv`) detects the sensor DRDY interrupt pin, asserts chip select, reads the 14-byte IMU burst via SPI DMA, stamps the frame with a 64-bit nanosecond timer, and writes the 64-byte `Tlp64` datagram directly into `spsc_tlp_ring`.
+   - **On RP2350 Pico 2 W**: PIO2 state machine (`PioImuReader` / `asp_pio_tlp_shim.sv`) detects the sensor DRDY interrupt pin, asserts chip select, reads the 14-byte IMU burst via SPI DMA, stamps the frame with a 64-bit nanosecond timer, and writes the 64-byte `Tlp64` datagram directly into an AbstractX `SpscTlpRing`.
    - **On QMTECH Zynq-7020 (XC7Z020 FPGA)**: Dedicated AXI-HP DMA mailboxes perform single-cycle parallel streaming (512-bit / 64-byte TLP in 10 ns) directly into the processing system ring buffer.
    - **On Cubie A5E & ESP32-P4**: RISC-V E906 / GDMA autonomous channels transfer sensor frames into shared-memory rings.
 2. **Zero CPU SPI Master Overhead**:
@@ -454,7 +434,7 @@ For high-end autonomous drones, computer vision, and AI companion platforms, `in
 | **USB 2.0 (CDC-ACM Serial)** | 35 MB/s | 125.0 µs – 1.0 ms | 5% – 15% (USB Stack) | ❌ High Jitter |
 
 ### Hardware Safety & Heartbeat Watchdog Mechanics:
-1. **Heartbeat Monitoring**: The Linux flight engine writes a heartbeat TLP to `PCIE_BAR_TELEMETRY_BASE` every cycle ($\le 10\ \text{ms}$).
+1. **Heartbeat Monitoring**: The Linux flight engine writes a heartbeat TLP to `bar::TelemetryBase` (AbstractX) every cycle ($\le 10\ \text{ms}$).
 2. **Autonomous FPGA Takeover**: If the Linux OS crashes, panics, or suffers severe thermal throttling, the FPGA's independent hardware state machine detects the lost heartbeat within $10\ \text{ms}$ and executes an emergency autonomous level descent or motor disarm.
 
 ---
