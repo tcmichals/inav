@@ -7,8 +7,8 @@
  * `inav-abstractx` - Production Throttle-Dependent Dynamic Gyro LPF
  *
  * Exact C++20 Reference Port of Upstream INAV C Source:
- *   - `/home/tcmichals/ssdData/projects/home/flightcode/inav/src/main/flight/dynamic_lpf.c`
- *   - `/home/tcmichals/ssdData/projects/home/flightcode/inav/src/main/flight/dynamic_lpf.h`
+ *   - `external/inav/src/main/flight/dynamic_lpf.c`
+ *   - `external/inav/src/main/flight/dynamic_lpf.h`
  *
  * Features:
  * 1. Throttle-Dependent Dynamic Cutoff Curve with Expo Interpolation:

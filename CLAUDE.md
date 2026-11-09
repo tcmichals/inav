@@ -68,8 +68,8 @@ The project merges **INAV 3D Navigation & State Estimation** with **Betaflight A
 # From the tcmichals/flight workspace root (passes AbstractX in, builds and runs the tests)
 cmake --workflow --preset sitl
 
-# Or from this directory inside the workspace
-cmake -B build -DABSTRACTX_PATH=../AbstractX && cmake --build build -j
+# Or from this directory passing the AbstractX path
+cmake -B build -DABSTRACTX_PATH=<path/to/AbstractX> && cmake --build build -j
 
 # Run Submodule Differential Parity Tests (100% bit-exact against C sources)
 ./submodule_differential_test
@@ -96,6 +96,6 @@ Before declaring any feature or port complete, execute the 4-tier verification f
 
 For RP2350 Pico 2 bare-metal builds:
 ```bash
-cmake -B build_pico2w -DPICO_BOARD=pico2_w -DBUILD_PICO2=ON -DABSTRACTX_PATH=../AbstractX
+cmake -B build_pico2w -DPICO_BOARD=pico2_w -DBUILD_PICO2=ON -DABSTRACTX_PATH=<path/to/AbstractX>
 cmake --build build_pico2w -j --target inav_abstractx_pico2w
 ```

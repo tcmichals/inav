@@ -8,13 +8,16 @@
 
 | Repository / Project | Role & Architectural Scope | Key Directory / Path | Status |
 | :--- | :--- | :--- | :--- |
-| **`tcmichals/inav`** (This Repo) | C++20 Flight Dynamics, 3D Navigation, Filters, Attitude Estimation, Failsafe, and Avionics Safety Core. | [`/home/tcmichals/projects/quadcopter/inav`](file:///home/tcmichals/projects/quadcopter/inav) | **Active Working Tree** (0 Git Commits) |
-| **`tcmichals/AbstractX`** | Hardware Abstraction Layer (HAL), non-blocking C++20 coroutines, TLP Virtual Bus (`Tlp64`), lock-free rings (`DedicatedSpscChannel`, `TlpChannelMultiplexer`, `MpscEventQueue`), drivers, epoll reactor, and Studio. | [`/home/tcmichals/projects/AbstractX`](file:///home/tcmichals/projects/AbstractX) | Active (Partner Session) |
+| **`tcmichals/flight`** | Top-level repository workspace, `repo` manifest (`default.xml`), presets, build glue, and isolation enforcement. | `flight/` | Parent Manifest |
+| **`tcmichals/inav`** (This Repo) | C++20 Flight Dynamics, 3D Navigation, Filters, Attitude Estimation, Failsafe, and Avionics Safety Core. | `inav/` | Active Working Tree |
+| **`tcmichals/AbstractX`** | Hardware Abstraction Layer (HAL), non-blocking C++20 coroutines, TLP Virtual Bus (`Tlp64`), lock-free rings (`DedicatedSpscChannel`, `TlpChannelMultiplexer`, `MpscEventQueue`), drivers, epoll reactor, and Studio. | `AbstractX/` | Integrated |
+| **`tcmichals/abstractx-fpga`** | FPGA RTL, IP cores (Wishbone sockets, DShot, PWM, NeoPixel, IMU auto-DMA), and register maps. | `abstractx-fpga/` | Integrated |
+| **`tcmichals/pio2`** | Micro-programmable PIO state machine engine and assembler. | `pio2/` | Integrated |
 | **`tcmichals/python-imgui-esc-configurator`** | Full-featured desktop ESC configurator and firmware flasher in Python + `imgui-bundle` with 4-Way MSP passthrough. | [GitHub: `python-imgui-esc-configurator`](https://github.com/tcmichals/python-imgui-esc-configurator) | Production Ready |
-| **`external/inav`** | Upstream INAV reference C source files for mathematical differential verification. | [`external/inav/src/main/`](file:///home/tcmichals/projects/quadcopter/inav/external/inav/src/main/) | Submodule Linked |
-| **`external/betaflight`** | Upstream Betaflight reference C source files for rate dynamics and dynamic notch filters. | [`external/betaflight/src/main/`](file:///home/tcmichals/projects/quadcopter/inav/external/betaflight/src/main/) | Submodule Linked |
-| **`projects/cubie`** | Radxa Cubie A5E BSP, Buildroot environment, device tree overlays, and automated silicon sweep scripts. | [`/home/tcmichals/projects/cubie/cubie-a5e`](file:///home/tcmichals/projects/cubie/cubie-a5e) | Integrated |
-| **`projects/QMTECH`** | QMTECH Zynq-7020 XC7Z020 FPGA + Dual ARM Cortex-A9 starter kit board support and PetaLinux overlays. | [`/home/tcmichals/projects/QMTECH`](file:///home/tcmichals/projects/QMTECH) | Integrated |
+| **`external/inav`** | Upstream INAV reference C source files for mathematical differential verification. | `external/inav/src/main/` | Submodule Linked |
+| **`external/betaflight`** | Upstream Betaflight reference C source files for rate dynamics and dynamic notch filters. | `external/betaflight/src/main/` | Submodule Linked |
+| **`cubie-a5e`** | Radxa Cubie A5E BSP, Buildroot environment, device tree overlays, and automated silicon sweep scripts. | `cubie-a5e/` | Integrated |
+| **`projects/QMTECH`** | QMTECH Zynq-7020 XC7Z020 FPGA + Dual ARM Cortex-A9 starter kit board support and PetaLinux overlays. | `QMTECH/` | Integrated |
 
 ---
 
@@ -117,7 +120,7 @@
   - *Chip ID*: Detected (`0x0A..0x0C` = `b"H43"`)
   - *ODR*: 200 Hz continuous measurement
   - *3D Vector*: $X=-46, Y=550, Z=58$.
-- [x] **Identify Sweep Testing Suite**: Located [`cubie-a5e/tools/run_full_sweep.py`](file:///home/tcmichals/projects/cubie/cubie-a5e/tools/run_full_sweep.py).
+- [x] **Identify Sweep Testing Suite**: Located `cubie-a5e/tools/run_full_sweep.py`.
 - [x] **Physical IMU SPI + Interrupt Connection (100% VERIFIED LIVE)**:
   - Connected SPI1 bus: MOSI (`Pin 19`), MISO (`Pin 21`), CLK (`Pin 23`), CS (`Pin 24`).
   - Connected DRDY interrupt: **Pin 29** (`PI8` / `PI-EINT8`, PLIC IRQ 82).
@@ -136,7 +139,7 @@
   - Connected live sensor pipeline end-to-end: `inav_linux_sbc` receives live hardware IMU/Mag/GPS, executes Mahony AHRS, and feeds `g_msp_live_state`.
   - Verified live MSP query from host (`python3 tools/test_sitl_integration.py 192.168.3.3 5760`): `MSP_FC_VARIANT` ("INAV"), `MSP_API_VERSION` (2.0), `MSP_ATTITUDE` (`Roll=-1.0° Pitch=-2.1° Yaw=+28.0°`), and `MSP_RAW_GPS` all passed 100%.
 - [x] **Custom Bare-Metal C++ E906 Flight Co-Processor App (`inav_e906_app`) (100% VERIFIED LIVE)**:
-  - Created dedicated bare-metal C++ firmware [`AbstractX/apps/inav_e906_app`](file:///home/tcmichals/projects/AbstractX/apps/inav_e906_app):
+  - Created dedicated bare-metal C++ firmware `AbstractX/apps/inav_e906_app`:
     * **Zero Python / Zero REPL**: 84 KB compiled RISC-V RV32IMAFC ELF running in SRAM Space 0 (`0x3FFC0000`).
     * **SPI1 IMU**: 1 kHz burst read from ICM-42688-P (`0x1D` 14 bytes), packed to 64B TLP Tag 1 (`0x40001000`).
     * **TWI1 Compass**: 100 Hz 3D vector read from HMC5883L via canonical `abstractx::hal::II2c(1)`, packed to 64B TLP Tag 3 (`0x40003000`).
@@ -181,7 +184,7 @@ Consolidate INAV Configurator, Betaflight Configurator, `python-imgui-esc-config
 
 ### Action Items:
 - [x] **5.1 Unified MSP Client & INAV Studio Plugin (`inav_plugin.py`)**:
-  - Plugin cleanly separated from AbstractX and maintained inside INAV repository at [`tools/studio_plugin/inav_plugin.py`](file:///home/tcmichals/projects/quadcopter/inav/tools/studio_plugin/inav_plugin.py) inheriting from `AbstractXStudioPlugin`.
+  - Plugin cleanly separated from AbstractX and maintained inside INAV repository at [`tools/studio_plugin/inav_plugin.py`](tools/studio_plugin/inav_plugin.py) inheriting from `AbstractXStudioPlugin`.
   - AbstractX Studio dynamically loads external plugins via generic `--plugin <path>` CLI argument.
   - Background threaded non-blocking MSP protocol engine polling high-rate (Attitude, Status, Motors), medium-rate (IMU, Altitude, Analog, RC), and slow-rate (GPS).
 - [x] **5.2 Port Core FC Tabs**:
@@ -204,5 +207,5 @@ Consolidate INAV Configurator, Betaflight Configurator, `python-imgui-esc-config
 ## 6. Submodule & Maintenance Tasks
 
 - [x] **No AbstractX submodule** (2026-11-07): AbstractX comes from the `tcmichals/flight` workspace, which pins the tested commits.
-- [ ] **Git Commit Freeze Policy**: Maintain all working tree modifications live without executing `git commit` or `git push` until explicitly authorized by user.
-- [ ] **Mandatory Engineering Log Updates**: Keep [`docs/ENGINEERING_LOG.md`](file:///home/tcmichals/projects/quadcopter/inav/docs/ENGINEERING_LOG.md) synchronized after every hardware milestone and architectural decision.
+- [x] **Git Commit Policy**: Changes committed and pushed as authorized by owner.
+- [ ] **Mandatory Engineering Log Updates**: Keep [`docs/ENGINEERING_LOG.md`](docs/ENGINEERING_LOG.md) synchronized after every hardware milestone and architectural decision.

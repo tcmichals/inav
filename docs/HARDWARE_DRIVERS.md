@@ -4,6 +4,18 @@
 
 In `inav-abstractx`, all peripheral device drivers are implemented as self-contained C++20 header-only components inside [`src/drivers/`](file:///home/tcmichals/ssdData/projects/home/inav/src/drivers/). Drivers decouple physical register logic from I/O buses by consuming and producing 64-byte Transaction Layer Packets ([`asp_tlp64.hpp`](file:///home/tcmichals/ssdData/projects/home/AbstractX/include/asp_tlp64.hpp)).
 
+### `[SPEC-DRV-01]` One driver per chip, on AbstractX's TLP bus
+* **Requirement**: Each chip has exactly one driver class, used on every board and in SITL (owner, 2026-11-08: "get rid of duplication", "not #ifdef hell").
+  * It runs on AbstractX's runtime: `abstractx::coro::Task`, `coro::CoroutineIoEngine` for requests, `hal::get_timer_driver().sleep_ms_async()` for delays. Not INAV's `coroutine_task.hpp`, `TlpChannel` or a blocking bus.
+  * Register access uses AbstractX's bridge TLPs (`Tlp64::make_spi_transfer`, `make_i2c_read_reg` / `make_i2c_write_reg`). These are what every target `IoEngine` (Linux, Pico 2 W, E906) and the SITL plugin answer. A `MEM_RD` / `MEM_WR` at a `pcie_bar_map.hpp` address reaches no chip on any implemented target.
+  * DRDY-paced sampling is an auto-DMA stream armed with `DMA_CFG` (`make_hw_fusion_setup` / `make_hw_fusion_control`): one `DMA_STREAM` TLP per edge on the Telemetry channel, read with `async_await_stream`.
+  * The bus, chip select, interrupt pin and auto channel come from the board configuration at run time, never from the preprocessor.
+  * A completion that never arrives (SITL disconnect, unplugged sensor) is never waited for forever: callers bound init with `coro::with_timeout`.
+  * No exceptions, no RTTI, no heap.
+* **Why**: INAV had two variants of every chip driver (TLP and direct bus) and its own coroutine runtime, and the Pico build used only the direct-bus variant. A board that runs a different driver from SITL is not tested by SITL.
+* **Verified by**: `host-tests`, `sanitizer-gate`
+* **Implemented** (2026-11-08): ICM-42688-P (`Icm42688p` in `src/drivers/imu/icm42688p.hpp`, test `test/test_icm42688p.cpp`). **Not implemented yet**: the callers still use the old variants, which are deleted once they move; the other chips.
+
 ---
 
 ## 2. Sensor Driver Matrix

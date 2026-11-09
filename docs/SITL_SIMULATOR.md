@@ -37,6 +37,7 @@ flowchart LR
 
 ### `[SPEC-SITL-01]` Only the transport differs
 * **Requirement**: The SITL binary runs the same flight code and chip drivers as the aircraft. The only SITL-specific code is the TLP link (§3, [SPEC-SITL-03]). No `#ifdef` and no SITL branch in flight code or drivers.
+  * Flight code, drivers and their tests build with `-fno-exceptions -fno-rtti` on every target, as the firmware does. Simulator-only source files (the SITL host main, the Asio link, the plugin bridge) run only on the PC and may use exceptions and RTTI (owner, 2026-11-08). Because flight code is mostly headers, the flags apply per source file: a simulator file must not include flight-code internals; it calls the flight app through its entry point, which is compiled in its own file without exceptions.
 * **Why**: SITL proves nothing about the aircraft if it runs different code.
 * **Verified by**: `sitl-mission-review`
 * **Not implemented yet**: today SITL drives the loop from `sitl_main.cpp` and feeds the IMU straight into a ring.

@@ -6,7 +6,7 @@ SPDX-License-Identifier: GPL-3.0-or-later
 `tcmichals/inav` - Comprehensive Upstream INAV C Source vs C++20 Differential Mathematical Parity Suite
 
 Validates bit-for-bit mathematical equivalence against upstream INAV C source files in:
-  /home/tcmichals/ssdData/projects/home/flightcode/inav/src/main/
+  external/inav/src/main/
 """
 
 import sys

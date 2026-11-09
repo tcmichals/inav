@@ -66,15 +66,20 @@ static void signal_handler(int /*sig*/) {
     g_system_running.store(false, std::memory_order_relaxed);
 }
 
-static void update_msp_live_state() {
+static void update_msp_live_state(bool is_armed, const std::array<uint16_t, 4>& motors, const std::array<uint16_t, 16>& rc) {
     const auto& ekf_state = g_ekf3.state();
     g_msp_live_state.roll_decideg  = static_cast<int16_t>(ekf_state.attitude.roll_deg * 10.0f);
     g_msp_live_state.pitch_decideg = static_cast<int16_t>(ekf_state.attitude.pitch_deg * 10.0f);
     g_msp_live_state.yaw_deg       = static_cast<int16_t>(ekf_state.attitude.yaw_deg);
-    g_msp_live_state.altitude_cm   = static_cast<int32_t>(ekf_state.pos_ned_cm[2]);
-    g_msp_live_state.vario_cms     = static_cast<int16_t>(ekf_state.vel_ned_cms[2]);
+    g_msp_live_state.altitude_cm   = static_cast<int32_t>(g_hw_sim.altitude_m() * 100.0f);
+    g_msp_live_state.vario_cms     = static_cast<int16_t>(g_hw_sim.vario_m_s() * 100.0f);
     g_msp_live_state.sensor_flags  = 0x31; // ACC | BARO | GPS
     g_msp_live_state.cycle_time_us = 1000;
+    g_msp_live_state.arming_flags  = is_armed ? 1 : 0;
+    for (size_t i = 0; i < 4; ++i) {
+        g_msp_live_state.motor_us[i] = motors[i];
+    }
+    g_msp_live_state.rc_channels = rc;
 }
 
 // ---------------------------------------------------------------------------
@@ -133,38 +138,89 @@ static Task<void> run_flight_loop() {
                 g_task.resume();
             }
 
-            // 4. Run Navigation Engine on EKF3 estimated position
+            // 4. Poll MSP Server for live RC stick inputs
+            const auto rc = g_msp_server.rc_channels();
+            const bool is_armed = (rc[4] > 1700);
+
             const auto& ekf_state = g_ekf3.state();
-            flight::NavState nav_state{};
-            nav_state.pos_x_m = ekf_state.pos_ned_cm[0] / 100.0f;
-            nav_state.pos_y_m = ekf_state.pos_ned_cm[1] / 100.0f;
-            nav_state.pos_z_m = ekf_state.pos_ned_cm[2] / 100.0f;
-            nav_state.mode = flight::NavMode::ReturnToHome;
-            nav_state.home_set = true;
+            std::array<uint16_t, 4> motors{1000, 1000, 1000, 1000};
 
-            flight::NavCommand nav_cmd = g_nav_engine.update(nav_state, 0.001f);
+            if (is_armed) {
+                // Throttle: 1000..2000 µs mapped to 0.0..1.0f
+                float throttle = 0.0f;
+                const float raw_th = static_cast<float>(rc[2]);
+                if (raw_th > 1050.0f) {
+                    throttle = std::clamp((raw_th - 1000.0f) / 1000.0f, 0.0f, 1.0f);
+                }
 
-            // 5. Feed Navigation target rates into PID Controller
-            flight::Axis3f target_rates{
-                nav_cmd.target_roll_deg * 2.0f,
-                nav_cmd.target_pitch_deg * 2.0f,
-                nav_cmd.target_yaw_rate_deg_s
-            };
-            flight::Axis3f gyro_rates{
-                imu.gyro_deg_s[0],
-                imu.gyro_deg_s[1],
-                imu.gyro_deg_s[2]
-            };
-            flight::PidState pid_out = g_pid_controller.update(target_rates, gyro_rates, 0.5f, 0.001f);
+                flight::Axis3f target_rates{0.0f, 0.0f, 0.0f};
+                const uint16_t mode_ch = rc[5];
 
+                if (mode_ch > 1700) {
+                    // Flight Mode: Autonomous Return-to-Home (RTH) / Waypoint Navigation
+                    flight::NavState nav_state{};
+                    nav_state.pos_x_m = ekf_state.pos_ned_cm[0] / 100.0f;
+                    nav_state.pos_y_m = ekf_state.pos_ned_cm[1] / 100.0f;
+                    nav_state.pos_z_m = ekf_state.pos_ned_cm[2] / 100.0f;
+                    nav_state.mode = flight::NavMode::ReturnToHome;
+                    nav_state.home_set = true;
 
-            auto motors = g_quad_mixer.mix(0.5f, pid_out);
-            for (size_t i = 0; i < 4; ++i) {
-                g_hw_sim.set_motor(i, motors[i]);
+                    flight::NavCommand nav_cmd = g_nav_engine.update(nav_state, 0.001f);
+                    target_rates = flight::Axis3f{
+                        nav_cmd.target_roll_deg * 2.0f,
+                        nav_cmd.target_pitch_deg * 2.0f,
+                        nav_cmd.target_yaw_rate_deg_s
+                    };
+                    if (throttle == 0.0f) {
+                        throttle = 0.5f; // Auto-hover throttle in RTH
+                    }
+                } else if (mode_ch >= 1300) {
+                    // Flight Mode: Angle Mode (Self-Leveling / Stabilized)
+                    // Stick mapping: 1000..2000 µs (center 1500) -> ±45° target roll/pitch, ±200°/s yaw
+                    const float target_roll_deg  = (static_cast<float>(rc[0]) - 1500.0f) * (45.0f / 500.0f);
+                    const float target_pitch_deg = (static_cast<float>(rc[1]) - 1500.0f) * (45.0f / 500.0f);
+                    const float target_yaw_dps   = (static_cast<float>(rc[3]) - 1500.0f) * (200.0f / 500.0f);
+
+                    flight::Axis3f target_angles{target_roll_deg, target_pitch_deg, 0.0f};
+                    flight::Axis3f current_angles{
+                        ekf_state.attitude.roll_deg,
+                        ekf_state.attitude.pitch_deg,
+                        ekf_state.attitude.yaw_deg
+                    };
+                    target_rates = g_pid_controller.calculate_angle_mode_rates(
+                        target_angles, current_angles, target_yaw_dps
+                    );
+                } else {
+                    // Flight Mode: Acro / Rate Mode
+                    target_rates = flight::Axis3f{
+                        (static_cast<float>(rc[0]) - 1500.0f) * (400.0f / 500.0f),
+                        (static_cast<float>(rc[1]) - 1500.0f) * (400.0f / 500.0f),
+                        (static_cast<float>(rc[3]) - 1500.0f) * (300.0f / 500.0f)
+                    };
+                }
+
+                // 5. Rate PID Controller
+                flight::Axis3f gyro_rates{
+                    imu.gyro_deg_s[0],
+                    imu.gyro_deg_s[1],
+                    imu.gyro_deg_s[2]
+                };
+                flight::PidState pid_out = g_pid_controller.update(target_rates, gyro_rates, throttle, 0.001f);
+
+                // 6. QuadX Motor Mixing & Actuator Outputs
+                motors = g_quad_mixer.mix(throttle, pid_out);
+                for (size_t i = 0; i < 4; ++i) {
+                    g_hw_sim.set_motor(i, motors[i]);
+                }
+            } else {
+                // Disarmed: Safety cutoff and PID integral reset
+                g_pid_controller.reset();
+                for (size_t i = 0; i < 4; ++i) {
+                    g_hw_sim.set_motor(i, 1000);
+                }
             }
 
-
-            update_msp_live_state();
+            update_msp_live_state(is_armed, motors, rc);
             g_msp_server.update_live_state(g_msp_live_state);
 
             (void)g_logging_ring.push(tlp);

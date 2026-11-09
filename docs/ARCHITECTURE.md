@@ -38,7 +38,7 @@
 
 ## 2. AbstractX TLP Virtual Bus
 
-INAV uses AbstractX's 64-byte TLP bus and keeps no copy of its definitions. The TLP layout, type and channel values, the `length_dw` unit and the device register map are defined only in AbstractX:
+INAV uses AbstractX's 64-byte TLP bus and keeps no copy of its definitions. Both projects, together with `abstractx-fpga` and `pio2`, are assembled in the [`flight`](https://github.com/tcmichals/flight) workspace manifest (`default.xml`). The TLP layout, type and channel values, the `length_dw` unit and the device register map are defined only in AbstractX:
 
 * Format: `AbstractX/docs/tier2_contracts/TLP_BUS_SPECIFICATION.md`, `AbstractX/include/asp_tlp64.hpp`
 * Register map: `AbstractX/include/pcie_bar_map.hpp`

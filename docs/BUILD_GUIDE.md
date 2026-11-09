@@ -1,8 +1,20 @@
 # Comprehensive Build & Target Guide: Pico 2 W, Linux SITL & Linux SBC/FPGA
 
 > [!IMPORTANT]
-> **UNIFIED BUILD SPECIFICATION**
-> `inav-abstractx` compiles into three primary target deliverables from the same source tree:
+> **WORKSPACE INTEGRATION (`flight`)**
+> `inav-abstractx` is part of the [`tcmichals/flight`](https://github.com/tcmichals/flight) repository workspace. The parent `flight` manifest (`default.xml`) manages the tested revisions of `inav`, `AbstractX`, `abstractx-fpga`, and `pio2`.
+>
+> **Recommended Workflow (from the `flight` workspace root)**:
+> ```bash
+> # 1. Clone and sync the flight workspace
+> repo init -u git@github.com:tcmichals/flight.git -b main
+> repo sync -c
+>
+> # 2. Configure, build, and test SITL
+> cmake --workflow --preset sitl
+> ```
+>
+> `inav-abstractx` compiles into three primary target deliverables:
 > 1. **Raspberry Pi Pico 2 / Pico 2 W** (`inav_abstractx_pico2w.uf2` - Bare-metal dual-core RP2350).
 > 2. **Linux Desktop SITL / HIL** (`inav_abstractx_sitl` - Software-in-the-Loop simulation with TCP 5760).
 > 3. **Linux Quad-Core SBC + FPGA** (`inav_linux_sbc` - PREEMPT_RT companion computer over PCIe TLP bus).
@@ -17,12 +29,10 @@
 
 ### Step-by-Step Compilation:
 ```bash
-cd /home/tcmichals/ssdData/projects/home/inav
+# From the inav directory, specifying ABSTRACTX_PATH:
+cmake -B build_pico2w -DPICO_BOARD=pico2_w -DCMAKE_BUILD_TYPE=Release -DABSTRACTX_PATH=<path/to/AbstractX>
 
-# 1. Configure CMake with Pico 2 W target (FetchContent handles SDK offline):
-cmake -B build_pico2w -DPICO_BOARD=pico2_w -DCMAKE_BUILD_TYPE=Release -DABSTRACTX_PATH=../AbstractX
-
-# 2. Compile UF2 binary:
+# Compile UF2 binary:
 cmake --build build_pico2w -j$(nproc)
 ```
 
@@ -54,12 +64,11 @@ sudo apt install -y build-essential cmake libboost-all-dev libcpputest-dev gdb p
 
 ### Step-by-Step Compilation:
 ```bash
-cd /home/tcmichals/ssdData/projects/home/inav
+# 1. Primary: from the flight workspace root:
+cmake --workflow --preset sitl
 
-# 1. Configure CMake Debug build:
-cmake -B build -DCMAKE_BUILD_TYPE=Debug -DABSTRACTX_PATH=../AbstractX
-
-# 2. Build SITL executable and unit tests:
+# 2. Or standalone from the inav directory:
+cmake -B build -DCMAKE_BUILD_TYPE=Debug -DABSTRACTX_PATH=<path/to/AbstractX>
 cmake --build build -j$(nproc)
 ```
 

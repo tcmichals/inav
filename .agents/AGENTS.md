@@ -13,8 +13,8 @@
 ## Algorithmic Fidelity & Porting Rules
 1. **Master Porting Plan**: Always reference, update, and follow the master checklist in [`docs/INAV_PORTING_MASTER_PLAN.md`](../docs/INAV_PORTING_MASTER_PLAN.md).
 2. **Reference-First Parity**: When implementing or auditing flight dynamics, sensor filters, or navigation, cross-reference the exact upstream C source files in:
-   - Upstream INAV submodule: `external/inav/src/main/` (or `/home/tcmichals/ssdData/projects/home/flightcode/inav/src/main/`)
-   - Upstream Betaflight submodule: `external/betaflight/src/main/` (or `/home/tcmichals/ssdData/projects/home/flightcode/betaflight/src/main/`)
+   - Upstream INAV submodule: `external/inav/src/main/`
+   - Upstream Betaflight submodule: `external/betaflight/src/main/`
 3. **Zero Toy Stubs**: Never implement textbook approximations (e.g., raw unfiltered PID derivative, fixed-gain EKF, or empty switch statements). Every filter stage, anti-windup clamp, transition curve, and state machine from the reference C files must be faithfully implemented.
 4. **Evidence-Based Completion**: Never claim a feature is "100% Complete" in documentation unless all mathematical formulas, constants, and filter stages from the reference C files have been ported and validated with unit tests.
 5. **Sensor Initialization & Data Gathering Parity**: Sensor drivers and data ingestion pipelines must maintain complete parity with upstream INAV and Betaflight:

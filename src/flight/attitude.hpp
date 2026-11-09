@@ -8,9 +8,9 @@
  * `inav-abstractx` - Production INAV IMU & Mahony AHRS Attitude Filter
  *
  * Exact C++20 Reference Port of Upstream INAV C Source:
- *   - `/home/tcmichals/ssdData/projects/home/flightcode/inav/src/main/flight/imu.c`
- *   - `/home/tcmichals/ssdData/projects/home/flightcode/inav/src/main/flight/imu.h`
- *   - `/home/tcmichals/ssdData/projects/home/flightcode/inav/src/main/common/quaternion.h`
+ *   - `external/inav/src/main/flight/imu.c`
+ *   - `external/inav/src/main/flight/imu.h`
+ *   - `external/inav/src/main/common/quaternion.h`
  *
  * Faithfully ports all mathematical stages, constants, and algorithms:
  * 1. Exact 3D Quaternion Orientation & Rotation Matrix (rMat[3][3]) on SO(3).

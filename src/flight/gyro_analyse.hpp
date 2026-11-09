@@ -8,9 +8,9 @@
  * `inav-abstractx` - Production Dynamic Gyro Notch & Spectral Frequency Analyzer
  *
  * Exact C++20 Reference Port of Upstream INAV C Source:
- *   - `/home/tcmichals/ssdData/projects/home/flightcode/inav/src/main/flight/gyroanalyse.c`
- *   - `/home/tcmichals/ssdData/projects/home/flightcode/inav/src/main/flight/gyroanalyse.h`
- *   - `/home/tcmichals/ssdData/projects/home/flightcode/inav/src/main/sensors/gyro.c`
+ *   - `external/inav/src/main/flight/gyroanalyse.c`
+ *   - `external/inav/src/main/flight/gyroanalyse.h`
+ *   - `external/inav/src/main/sensors/gyro.c`
  *
  * Features:
  * 1. 64-Point Sliding Window Real FFT (RFFT) with Downsampling Denominator.

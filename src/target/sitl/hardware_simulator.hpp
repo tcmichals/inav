@@ -68,13 +68,35 @@ public:
         roll_deg_  = std::clamp(roll_deg_,  -85.0f, 85.0f);
         pitch_deg_ = std::clamp(pitch_deg_, -85.0f, 85.0f);
 
-        // 3. Simulated Body-Frame Accelerometer (1G gravity vector rotated into body frame)
+        // 3. Vertical Dynamics (Z axis / Altitude)
+        // Total thrust normalized: 0.0 to 1.0 (hover ~ 0.50)
         constexpr float DEG2RAD = 0.0174532925f;
         float sin_p = std::sin(pitch_deg_ * DEG2RAD);
         float cos_p = std::cos(pitch_deg_ * DEG2RAD);
         float sin_r = std::sin(roll_deg_ * DEG2RAD);
         float cos_r = std::cos(roll_deg_ * DEG2RAD);
 
+        float avg_thrust = (thrust[0] + thrust[1] + thrust[2] + thrust[3]) * 0.25f;
+        float thrust_acc_z = (avg_thrust * 19.62f) * cos_r * cos_p;
+        float net_acc_z = thrust_acc_z - 9.81f; // gravity down
+
+        vel_z_m_s_ += net_acc_z * dt_s;
+        vel_z_m_s_ -= 0.2f * vel_z_m_s_ * dt_s; // Aerodynamic drag
+        alt_m_ += vel_z_m_s_ * dt_s;
+
+        if (alt_m_ <= 0.0f) {
+            alt_m_ = 0.0f;
+            if (vel_z_m_s_ < 0.0f) vel_z_m_s_ = 0.0f;
+            if (avg_thrust < 0.2f) {
+                roll_deg_ *= 0.95f;
+                pitch_deg_ *= 0.95f;
+                gyro_rate_deg_s_[0] *= 0.9f;
+                gyro_rate_deg_s_[1] *= 0.9f;
+                gyro_rate_deg_s_[2] *= 0.9f;
+            }
+        }
+
+        // 4. Simulated Body-Frame Accelerometer (1G gravity vector rotated into body frame)
         float acc_x_g = -sin_p;
         float acc_y_g =  sin_r * cos_p;
         float acc_z_g =  cos_r * cos_p;
@@ -124,6 +146,8 @@ public:
     float roll_deg() const noexcept { return roll_deg_; }
     float pitch_deg() const noexcept { return pitch_deg_; }
     float yaw_deg() const noexcept { return yaw_deg_; }
+    float altitude_m() const noexcept { return alt_m_; }
+    float vario_m_s() const noexcept { return vel_z_m_s_; }
 
 private:
     uint64_t current_timestamp_ns_{0};
@@ -136,6 +160,8 @@ private:
     float roll_deg_{0.0f};
     float pitch_deg_{0.0f};
     float yaw_deg_{0.0f};
+    float alt_m_{0.0f};
+    float vel_z_m_s_{0.0f};
 };
 
 } // namespace abstractx::sitl

@@ -147,9 +147,16 @@ class ConfiguratorState:
         self.gps_speed_mps = 0.0
         self.gps_hdop = 0.76
 
-        # RC Receiver (16 Channels, 1000..2000 us)
+        # RC Receiver & Transmitter Sticks (16 Channels, 1000..2000 us)
+        # Mode 2 Transmitter: CH1=Roll(1500), CH2=Pitch(1500), CH3=Throttle(1000), CH4=Yaw(1500)
+        # CH5=AUX1 (Arm: 1000=Disarmed, 2000=Armed)
+        # CH6=AUX2 (Flight Mode: 1000=Acro, 1500=Angle, 2000=RTH)
         self.rc_channels = [1500] * 16
-        self.rc_channels[2] = 1000 # Throttle low
+        self.rc_channels[2] = 1000 # Throttle min
+        self.rc_channels[4] = 1000 # Disarmed
+        self.rc_channels[5] = 1500 # Angle mode
+        self.dragging_gimbal_left = False
+        self.dragging_gimbal_right = False
 
         # Actuators / Motors (M1..M8, 1000..2000 us)
         self.motor_pwm = [1000] * 8
@@ -251,6 +258,11 @@ class ConfiguratorState:
         while not self._stop_event.is_set():
             t0 = time.time()
             try:
+                # Stream Live RC Transmitter Stick Channels to FC (30 Hz)
+                with self.lock:
+                    rc_payload = struct.pack('<16H', *self.rc_channels)
+                self._send_msp_cmd(MSP_SET_RAW_RC, rc_payload)
+
                 # Fast Telemetry (30 Hz): Attitude, Status, Motors
                 self._send_msp_cmd(MSP_ATTITUDE)
                 self._send_msp_cmd(MSP_STATUS)
@@ -345,7 +357,8 @@ class ConfiguratorState:
                 for i in range(min(len(payload) // 2, 8)):
                     self.motor_pwm[i] = struct.unpack('<H', payload[i*2:i*2+2])[0]
             elif cmd == MSP_RC and len(payload) >= 32:
-                for i in range(16):
+                # Update telemetry auxiliary channels 6..15 from FC, preserve transmitter stick setpoints 0..5
+                for i in range(6, 16):
                     self.rc_channels[i] = struct.unpack('<H', payload[i*2:i*2+2])[0]
             elif cmd == MSP_PID and len(payload) >= 9:
                 for i in range(3):
@@ -530,6 +543,55 @@ class InavConfiguratorPlugin(AbstractXStudioPlugin):
         self._render_gimbals(draw_list, g_pos, gimbal_size)
         imgui.dummy(gimbal_size)
 
+        # Flight Deck Control Toolbar: Arming, Flight Mode, Quick Throttle
+        imgui.spacing()
+        is_armed = (st.rc_channels[4] > 1700)
+        if is_armed:
+            imgui.push_style_color(imgui.Col_.button, imgui.ImVec4(0.8, 0.15, 0.15, 1.0))
+            imgui.push_style_color(imgui.Col_.button_hovered, imgui.ImVec4(0.95, 0.25, 0.25, 1.0))
+            if imgui.button("● ARMED (MOTORS LIVE) - CLICK TO DISARM", imgui.ImVec2(avail_w * 0.48, 28)):
+                st.rc_channels[4] = 1000
+            imgui.pop_style_color(2)
+        else:
+            imgui.push_style_color(imgui.Col_.button, imgui.ImVec4(0.15, 0.55, 0.25, 1.0))
+            imgui.push_style_color(imgui.Col_.button_hovered, imgui.ImVec4(0.25, 0.75, 0.35, 1.0))
+            if imgui.button("○ DISARMED (SAFE) - CLICK TO ARM", imgui.ImVec2(avail_w * 0.48, 28)):
+                st.rc_channels[4] = 2000
+            imgui.pop_style_color(2)
+
+        imgui.same_line()
+        mode_val = st.rc_channels[5]
+        cur_mode = "ANGLE (Self-Level)" if 1300 <= mode_val <= 1700 else ("RTH (Auto-Nav)" if mode_val > 1700 else "ACRO (Manual)")
+        if imgui.button(f"FLIGHT MODE: {cur_mode} ▼", imgui.ImVec2(avail_w * 0.48, 28)):
+            imgui.open_popup("flight_mode_popup")
+        if imgui.begin_popup("flight_mode_popup"):
+            if imgui.menu_item("ANGLE (Self-Leveling / Stabilized)")[0]:
+                st.rc_channels[5] = 1500
+            if imgui.menu_item("ACRO (Rate / Direct Stick)")[0]:
+                st.rc_channels[5] = 1000
+            if imgui.menu_item("RTH (Autonomous Return-to-Home)")[0]:
+                st.rc_channels[5] = 2000
+            imgui.end_popup()
+
+        # Quick Throttle Presets
+        imgui.spacing()
+        imgui.text_colored(imgui.ImVec4(0.7, 0.8, 0.9, 1.0), "Quick Throttle:")
+        imgui.same_line()
+        if imgui.button("Cut (0%)", imgui.ImVec2(75, 22)):
+            st.rc_channels[2] = 1000
+        imgui.same_line()
+        if imgui.button("Idle (10%)", imgui.ImVec2(75, 22)):
+            st.rc_channels[2] = 1100
+        imgui.same_line()
+        if imgui.button("Hover (50%)", imgui.ImVec2(80, 22)):
+            st.rc_channels[2] = 1500
+        imgui.same_line()
+        if imgui.button("Climb (65%)", imgui.ImVec2(80, 22)):
+            st.rc_channels[2] = 1650
+        imgui.same_line()
+        if imgui.button("Full (100%)", imgui.ImVec2(75, 22)):
+            st.rc_channels[2] = 2000
+
         imgui.next_column()
 
         # Right Column: Boeing/Garmin G1000 PFD HUD & Actuators
@@ -667,29 +729,81 @@ class InavConfiguratorPlugin(AbstractXStudioPlugin):
         w, h = size.x, size.y
         st = self.state
         g_radius = 48.0
-        g1_cx, g1_cy = pos.x + w * 0.28, pos.y + h * 0.5
-        g2_cx, g2_cy = pos.x + w * 0.72, pos.y + h * 0.5
+        g1_cx, g1_cy = pos.x + w * 0.28, pos.y + h * 0.44
+        g2_cx, g2_cy = pos.x + w * 0.72, pos.y + h * 0.44
 
-        ring_col = imgui.color_convert_float4_to_u32(imgui.ImVec4(0.2, 0.3, 0.45, 0.8))
-        stick_col = imgui.color_convert_float4_to_u32(imgui.ImVec4(0.0, 0.9, 1.0, 1.0))
+        io = imgui.get_io()
+        mouse_pos = io.mouse_pos
+        is_lmb = imgui.is_mouse_down(imgui.MouseButton_.left)
 
-        # Left Gimbal: Throttle / Yaw (Channels 3 & 4)
+        # 1. Left Gimbal Mouse Drag Interaction (Yaw = X axis, Throttle = Y axis)
+        dist_g1 = math.hypot(mouse_pos.x - g1_cx, mouse_pos.y - g1_cy)
+        if is_lmb and (st.dragging_gimbal_left or dist_g1 <= g_radius + 10.0):
+            st.dragging_gimbal_left = True
+            dx = max(-(g_radius - 8.0), min(g_radius - 8.0, mouse_pos.x - g1_cx))
+            dy = max(-(g_radius - 8.0), min(g_radius - 8.0, mouse_pos.y - g1_cy))
+            # Yaw: X axis [-R, +R] -> [1000, 2000] us
+            st.rc_channels[3] = int(1500 + (dx / (g_radius - 8.0)) * 500.0)
+            # Throttle: Y axis [+R (down), -R (up)] -> [1000, 2000] us
+            th_ratio = (g_radius - 8.0 - dy) / (2.0 * (g_radius - 8.0))
+            st.rc_channels[2] = max(1000, min(2000, int(1000 + th_ratio * 1000.0)))
+        elif not is_lmb and st.dragging_gimbal_left:
+            st.dragging_gimbal_left = False
+            st.rc_channels[3] = 1500  # Yaw springs to center; Throttle holds position!
+
+        # 2. Right Gimbal Mouse Drag Interaction (Roll = X axis, Pitch = Y axis)
+        dist_g2 = math.hypot(mouse_pos.x - g2_cx, mouse_pos.y - g2_cy)
+        if is_lmb and (st.dragging_gimbal_right or dist_g2 <= g_radius + 10.0):
+            st.dragging_gimbal_right = True
+            dx = max(-(g_radius - 8.0), min(g_radius - 8.0, mouse_pos.x - g2_cx))
+            dy = max(-(g_radius - 8.0), min(g_radius - 8.0, mouse_pos.y - g2_cy))
+            # Roll: X axis [-R, +R] -> [1000, 2000] us
+            st.rc_channels[0] = int(1500 + (dx / (g_radius - 8.0)) * 500.0)
+            # Pitch: Y axis [-R (up/forward), +R (down/back)] -> [1000, 2000] us
+            st.rc_channels[1] = int(1500 - (dy / (g_radius - 8.0)) * 500.0)
+        elif not is_lmb and st.dragging_gimbal_right:
+            st.dragging_gimbal_right = False
+            st.rc_channels[0] = 1500  # Roll springs to center
+            st.rc_channels[1] = 1500  # Pitch springs to center
+
+        # Colors
+        bg_col = imgui.color_convert_float4_to_u32(imgui.ImVec4(0.04, 0.07, 0.12, 0.9))
+        ring_col = imgui.color_convert_float4_to_u32(imgui.ImVec4(0.18, 0.32, 0.52, 0.8))
+        grid_col = imgui.color_convert_float4_to_u32(imgui.ImVec4(0.12, 0.22, 0.35, 0.6))
+        stick_active_col = imgui.color_convert_float4_to_u32(imgui.ImVec4(0.0, 0.95, 1.0, 1.0))
+        stick_halo_col = imgui.color_convert_float4_to_u32(imgui.ImVec4(0.0, 0.7, 1.0, 0.3))
+
+        # ---- Render Left Gimbal (Throttle / Yaw) ----
+        dl.add_circle_filled(imgui.ImVec2(g1_cx, g1_cy), g_radius, bg_col, 32)
         dl.add_circle(imgui.ImVec2(g1_cx, g1_cy), g_radius, ring_col, 32, 2.0)
-        th_norm = (st.rc_channels[2] - 1000.0) / 1000.0  # 0..1
-        yaw_norm = (st.rc_channels[3] - 1500.0) / 500.0  # -1..1
+        # Center Reticle
+        dl.add_line(imgui.ImVec2(g1_cx - g_radius + 4, g1_cy), imgui.ImVec2(g1_cx + g_radius - 4, g1_cy), grid_col, 1.0)
+        dl.add_line(imgui.ImVec2(g1_cx, g1_cy - g_radius + 4), imgui.ImVec2(g1_cx, g1_cy + g_radius - 4), grid_col, 1.0)
+
+        th_norm = max(0.0, min(1.0, (st.rc_channels[2] - 1000.0) / 1000.0))  # 0..1
+        yaw_norm = max(-1.0, min(1.0, (st.rc_channels[3] - 1500.0) / 500.0))  # -1..1
         st1_x = g1_cx + yaw_norm * (g_radius - 8.0)
         st1_y = (g1_cy + g_radius - 8.0) - th_norm * (2.0 * (g_radius - 8.0))
-        dl.add_circle_filled(imgui.ImVec2(st1_x, st1_y), 7.0, stick_col)
-        dl.add_text(imgui.ImVec2(g1_cx - 42, g1_cy + g_radius + 4), imgui.color_convert_float4_to_u32(imgui.ImVec4(0.7, 0.8, 0.9, 1)), "THROTTLE / YAW")
+        dl.add_circle_filled(imgui.ImVec2(st1_x, st1_y), 13.0, stick_halo_col)
+        dl.add_circle_filled(imgui.ImVec2(st1_x, st1_y), 7.0, stick_active_col)
+        dl.add_text(imgui.ImVec2(g1_cx - 56, g1_cy + g_radius + 4), imgui.color_convert_float4_to_u32(imgui.ImVec4(0.7, 0.85, 1.0, 1)),
+                    f"THR: {st.rc_channels[2]} | YAW: {st.rc_channels[3]}")
 
-        # Right Gimbal: Pitch / Roll (Channels 2 & 1)
+        # ---- Render Right Gimbal (Pitch / Roll) ----
+        dl.add_circle_filled(imgui.ImVec2(g2_cx, g2_cy), g_radius, bg_col, 32)
         dl.add_circle(imgui.ImVec2(g2_cx, g2_cy), g_radius, ring_col, 32, 2.0)
-        roll_norm = (st.rc_channels[0] - 1500.0) / 500.0 # -1..1
-        pitch_norm = (st.rc_channels[1] - 1500.0) / 500.0 # -1..1
+        # Center Reticle
+        dl.add_line(imgui.ImVec2(g2_cx - g_radius + 4, g2_cy), imgui.ImVec2(g2_cx + g_radius - 4, g2_cy), grid_col, 1.0)
+        dl.add_line(imgui.ImVec2(g2_cx, g2_cy - g_radius + 4), imgui.ImVec2(g2_cx, g2_cy + g_radius - 4), grid_col, 1.0)
+
+        roll_norm = max(-1.0, min(1.0, (st.rc_channels[0] - 1500.0) / 500.0))  # -1..1
+        pitch_norm = max(-1.0, min(1.0, (st.rc_channels[1] - 1500.0) / 500.0)) # -1..1
         st2_x = g2_cx + roll_norm * (g_radius - 8.0)
         st2_y = g2_cy - pitch_norm * (g_radius - 8.0)
-        dl.add_circle_filled(imgui.ImVec2(st2_x, st2_y), 7.0, stick_col)
-        dl.add_text(imgui.ImVec2(g2_cx - 36, g2_cy + g_radius + 4), imgui.color_convert_float4_to_u32(imgui.ImVec4(0.7, 0.8, 0.9, 1)), "PITCH / ROLL")
+        dl.add_circle_filled(imgui.ImVec2(st2_x, st2_y), 13.0, stick_halo_col)
+        dl.add_circle_filled(imgui.ImVec2(st2_x, st2_y), 7.0, stick_active_col)
+        dl.add_text(imgui.ImVec2(g2_cx - 54, g2_cy + g_radius + 4), imgui.color_convert_float4_to_u32(imgui.ImVec4(0.7, 0.85, 1.0, 1)),
+                    f"ROL: {st.rc_channels[0]} | PIT: {st.rc_channels[1]}")
 
     # --------------------------------------------------------------------------
     # Sub-Tab 2: Setup & Calibration

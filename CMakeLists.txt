@@ -250,6 +250,10 @@ else()
     add_executable(tlp_wire_format_test test/test_tlp_wire_format.cpp)
     add_test(NAME TlpWireFormatTest COMMAND tlp_wire_format_test)
 
+    # @impl [SPEC-DRV-01] docs/HARDWARE_DRIVERS.md: the one ICM-42688-P driver on AbstractX's bus.
+    add_executable(icm42688p_test test/test_icm42688p.cpp)
+    add_test(NAME Icm42688pTest COMMAND icm42688p_test)
+
     # @impl [SPEC-SITL-03] docs/SITL_SIMULATOR.md: the SITL TLP link over TCP.
     add_executable(sitl_tlp_link_test test/test_sitl_tlp_link.cpp)
     add_test(NAME SitlTlpLinkTest COMMAND sitl_tlp_link_test)

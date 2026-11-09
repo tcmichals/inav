@@ -7,8 +7,8 @@
  * `inav-abstractx` - Production EZ-Tune Macro Preset Engine
  *
  * Exact C++20 Reference Port of Upstream INAV C Source:
- *   - `/home/tcmichals/ssdData/projects/home/flightcode/inav/src/main/flight/ez_tune.c`
- *   - `/home/tcmichals/ssdData/projects/home/flightcode/inav/src/main/flight/ez_tune.h`
+ *   - `external/inav/src/main/flight/ez_tune.c`
+ *   - `external/inav/src/main/flight/ez_tune.h`
  *
  * Faithfully ports all formulas, scales, and filter synthesis stages:
  * 1. Exact default PID base matrices (Roll/Pitch: [40, 75, 23, 100], Yaw: [45, 80, 0, 100]).

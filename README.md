@@ -16,6 +16,9 @@ The system is deployed uniformly across four heterogeneous hardware platforms:
 - **ESP32-P4-WIFI6 (Kit A / Slim)**: Dual-core 400 MHz RISC-V companion with 2-lane MIPI-CSI 120 fps optical flow camera and Wi-Fi 6 telemetry.
 - **Linux Desktop SITL**: 6-DOF multicopter software-in-the-loop simulation with INAV Configurator TCP server (port 5760).
 
+### Workspace Integration (`flight`)
+`inav` is integrated, tested, and pinned inside the [`tcmichals/flight`](https://github.com/tcmichals/flight) repository workspace. The parent `flight` manifest ([`default.xml`](../flight/default.xml)) coordinates tested git revisions across `inav`, `AbstractX`, `abstractx-fpga`, and `pio2`. When working within the `flight` workspace, `CMakePresets.json` passes `ABSTRACTX_PATH` automatically.
+
 > [!IMPORTANT]
 > **Upstream Synchronization & Merge Invariant**:
 > Upstream INAV's original documentation, setup instructions, and feature guide are preserved in [`docs/inav.md`](docs/inav.md). When synchronizing or merging submodules (`external/inav` or `external/betaflight`), this root `README.md` is strictly authoritative for the C++20 flight engine architecture and must never be overwritten by upstream legacy README files.
@@ -151,7 +154,7 @@ High-rate flight dynamics (8 kHz loop frequency) require sub-microsecond IMU dat
 ```
 
 #### Compile-Time `AutoDmaCapableImu` C++20 Concept
-In [`src/target/common/auto_dma_manager.hpp`](file:///home/tcmichals/projects/quadcopter/inav/src/target/common/auto_dma_manager.hpp), any sensor driver conforms to generic Auto-DMA through static concept validation:
+In [`src/target/common/auto_dma_manager.hpp`](src/target/common/auto_dma_manager.hpp), any sensor driver conforms to generic Auto-DMA through static concept validation:
 ```cpp
 template <typename T>
 concept AutoDmaCapableImu = requires(std::span<const uint8_t> raw, uint64_t ts, const Tlp64& tlp) {
@@ -162,9 +165,9 @@ concept AutoDmaCapableImu = requires(std::span<const uint8_t> raw, uint64_t ts, 
 ```
 
 #### Supported Sensor Profiles & Hardware Offloading
-- **TDK ICM-42688-P** ([`src/drivers/imu/icm42688p.hpp`](file:///home/tcmichals/projects/quadcopter/inav/src/drivers/imu/icm42688p.hpp)): Burst starting at register `0x1D` (`REG_TEMP_DATA1`), length 14 bytes (`Temp[0..1]`, `Accel[2..7]`, `Gyro[8..13]`), positive rising edge, 24 MHz SPI.
-- **InvenSense MPU-6000** ([`src/drivers/imu/mpu6000.hpp`](file:///home/tcmichals/projects/quadcopter/inav/src/drivers/imu/mpu6000.hpp)): Burst starting at register `0x3B` (`REG_ACCEL_XOUT_H`), length 14 bytes (`Accel[0..5]`, `Temp[6..7]`, `Gyro[8..13]`), positive rising edge, 20 MHz SPI.
-- **Bosch BMI088** ([`src/drivers/imu/bmi088.hpp`](file:///home/tcmichals/projects/quadcopter/inav/src/drivers/imu/bmi088.hpp)): Gyro burst starting at register `0x02` (`REG_RATE_X_LSB`), length 6 bytes (Little-Endian `Gyro X, Y, Z`), positive rising edge, 10 MHz SPI.
+- **TDK ICM-42688-P** ([`src/drivers/imu/icm42688p.hpp`](src/drivers/imu/icm42688p.hpp)): Burst starting at register `0x1D` (`REG_TEMP_DATA1`), length 14 bytes (`Temp[0..1]`, `Accel[2..7]`, `Gyro[8..13]`), positive rising edge, 24 MHz SPI.
+- **InvenSense MPU-6000** ([`src/drivers/imu/mpu6000.hpp`](src/drivers/imu/mpu6000.hpp)): Burst starting at register `0x3B` (`REG_ACCEL_XOUT_H`), length 14 bytes (`Accel[0..5]`, `Temp[6..7]`, `Gyro[8..13]`), positive rising edge, 20 MHz SPI.
+- **Bosch BMI088** ([`src/drivers/imu/bmi088.hpp`](src/drivers/imu/bmi088.hpp)): Gyro burst starting at register `0x02` (`REG_RATE_X_LSB`), length 6 bytes (Little-Endian `Gyro X, Y, Z`), positive rising edge, 10 MHz SPI.
 
 #### Packets
 Setup, control and stream packets (`ASP_TLP_TYPE_DMA_CFG`, `ASP_TLP_TYPE_DMA_STREAM`) are AbstractX's, defined in `AbstractX/docs/tier2_contracts/TLP_BUS_SPECIFICATION.md`. INAV's own convention is the stream tag: 1 IMU, 2 GPS, 3 Mag, 4 Baro, 5 Pitot.
@@ -177,7 +180,7 @@ Algorithms are ported from upstream C sources in [`external/inav/src/main/`](ext
 
 | Subsystem | Upstream Reference | C++20 Implementation | Description |
 | :--- | :--- | :--- | :--- |
-| **Auto-DMA IMU Pipeline** | `inav/src/main/drivers/bus_spi.c`<br>`accgyro_spi_*.c` | [`src/target/common/auto_dma_manager.hpp`](file:///home/tcmichals/projects/quadcopter/inav/src/target/common/auto_dma_manager.hpp)<br>[`src/drivers/imu/imu_base.hpp`](file:///home/tcmichals/projects/quadcopter/inav/src/drivers/imu/imu_base.hpp) | Concept-based autonomous hardware DRDY/ISR offloading for any IMU (ICM-42688-P, MPU-6000, BMI088) with 64-byte `ASP_TLP_TYPE_DMA_STREAM` ingestion. |
+| **Auto-DMA IMU Pipeline** | `inav/src/main/drivers/bus_spi.c`<br>`accgyro_spi_*.c` | [`src/target/common/auto_dma_manager.hpp`](src/target/common/auto_dma_manager.hpp)<br>[`src/drivers/imu/imu_base.hpp`](src/drivers/imu/imu_base.hpp) | Concept-based autonomous hardware DRDY/ISR offloading for any IMU (ICM-42688-P, MPU-6000, BMI088) with 64-byte `ASP_TLP_TYPE_DMA_STREAM` ingestion. |
 | **Mahony AHRS** | `inav/src/main/flight/imu.c` | [`src/flight/attitude.hpp`](src/flight/attitude.hpp) | 11-stage Mahony orientation filter with centrifugal acceleration compensation ($\vec{a}_{\text{cent}} = \vec{v} \times \vec{\omega}$), gravity vector weighting, and magnetometer/GPS fusion. |
 | **Dynamic Gyro Notch** | `inav/src/main/flight/gyroanalyse.c` | [`src/flight/gyro_analyse.hpp`](src/flight/gyro_analyse.hpp) | 4-stage FFT analysis pipeline using Hanning windowing and parabolic peak interpolation for center frequency tracking. |
 | **Dynamic Gyro LPF** | `inav/src/main/flight/dynamic_lpf.c` | [`src/flight/dynamic_lpf.hpp`](src/flight/dynamic_lpf.hpp) | 1st/2nd-order dynamic low-pass filter scaled to throttle and motor RPM. |
@@ -236,9 +239,16 @@ The validation pipeline verifies numerical accuracy, timing constraints, and sys
 
 ### Building & Running on Linux Host (SITL & Cubie A5E)
 
+#### Primary Workflow (from `flight` workspace root)
+```bash
+# Configure, build, and run the complete SITL test suite
+cmake --workflow --preset sitl
+```
+
+#### Standalone Build
 ```bash
 # 1. Configure and build all host targets (SITL, test suites, benchmarks, SBC binary)
-cmake -B build -DCMAKE_BUILD_TYPE=Release -DABSTRACTX_PATH=../AbstractX
+cmake -B build -DCMAKE_BUILD_TYPE=Release -DABSTRACTX_PATH=<path/to/AbstractX>
 cmake --build build -j$(nproc)
 
 # 2. Run automated validation pipeline
@@ -261,7 +271,7 @@ python3 tools/run_all_validations.py
 
 ```bash
 # Configure and build Pico 2 W firmware (.uf2 / .elf)
-cmake -B build_pico2w -DPICO_BOARD=pico2_w -DCMAKE_BUILD_TYPE=Release -DABSTRACTX_PATH=../AbstractX
+cmake -B build_pico2w -DPICO_BOARD=pico2_w -DCMAKE_BUILD_TYPE=Release -DABSTRACTX_PATH=<path/to/AbstractX>
 cmake --build build_pico2w -j$(nproc)
 ```
 
@@ -269,7 +279,7 @@ cmake --build build_pico2w -j$(nproc)
 
 ```bash
 # Configure and build ESP32-P4 firmware via ESP-IDF / CMake
-cmake -B build_esp32p4 -DESP_PLATFORM=1 -DIDF_TARGET=esp32p4 -DCMAKE_BUILD_TYPE=Release -DABSTRACTX_PATH=../AbstractX
+cmake -B build_esp32p4 -DESP_PLATFORM=1 -DIDF_TARGET=esp32p4 -DCMAKE_BUILD_TYPE=Release -DABSTRACTX_PATH=<path/to/AbstractX>
 cmake --build build_esp32p4 -j$(nproc)
 ```
 
